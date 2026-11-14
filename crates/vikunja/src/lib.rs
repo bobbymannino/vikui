@@ -5,10 +5,12 @@
 mod error;
 mod project;
 mod server_url;
+mod task;
 
 use std::fmt;
 use std::time::Duration;
 
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig};
@@ -16,6 +18,7 @@ use ureq::tls::{RootCerts, TlsConfig};
 pub use error::Error;
 pub use project::Project;
 pub use server_url::{ServerUrl, ServerUrlError};
+pub use task::{RelativeReminder, RelativeTo, Task, TaskQuery, TaskReminder};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 const USER_AGENT: &str = concat!("vikui/", env!("CARGO_PKG_VERSION"));
@@ -168,21 +171,48 @@ impl Client {
     }
 
     /// Every non-archived project the user can access, in the server's order.
-    ///
-    /// Follows pagination until all pages are fetched.
     pub fn projects(&self, token: &Token) -> Result<Vec<Project>, Error> {
-        let url = self.server.endpoint("projects");
-        let mut projects = Vec::new();
+        self.get_all_pages(token, "projects", &[])
+    }
+
+    /// Every task matching `query`, across all projects the user can access.
+    pub fn tasks(&self, token: &Token, query: &TaskQuery) -> Result<Vec<Task>, Error> {
+        let mut params = Vec::new();
+        if let Some(filter) = query.filter.as_deref().filter(|f| !f.trim().is_empty()) {
+            params.push(("filter", filter.to_owned()));
+            // Interpret dates in filters (e.g. `due_date < now/d`) in the user's time zone.
+            if let Some(zone) = jiff::tz::TimeZone::system().iana_name() {
+                params.push(("filter_timezone", zone.to_owned()));
+            }
+        }
+        if let Some(search) = query.search.as_deref().filter(|s| !s.trim().is_empty()) {
+            params.push(("s", search.to_owned()));
+        }
+        self.get_all_pages(token, "tasks", &params)
+    }
+
+    /// `GET` a paginated collection, following pages until all items are fetched.
+    fn get_all_pages<T: DeserializeOwned>(
+        &self,
+        token: &Token,
+        path: &str,
+        params: &[(&str, String)],
+    ) -> Result<Vec<T>, Error> {
+        let url = self.server.endpoint(path);
+        let mut items = Vec::new();
         let mut page = 1;
         loop {
-            let mut response = self
+            let mut request = self
                 .agent
                 .get(url.as_str())
                 .header("Accept", ACCEPT_JSON)
                 .header("Authorization", &format!("Bearer {}", token.expose()))
                 .query("page", page.to_string())
-                .query("per_page", PAGE_SIZE.to_string())
-                .call()?;
+                .query("per_page", PAGE_SIZE.to_string());
+            for (name, value) in params {
+                request = request.query(*name, value);
+            }
+            let mut response = request.call()?;
             if !response.status().is_success() {
                 return Err(error_from(&mut response));
             }
@@ -194,11 +224,13 @@ impl Client {
                 .and_then(|value| value.trim().parse::<u32>().ok())
                 .unwrap_or(1)
                 .min(MAX_PAGES);
-            let batch: Vec<Project> = response.body_mut().read_json()?;
+            // Vikunja answers an empty collection with `null`.
+            let batch: Option<Vec<T>> = response.body_mut().read_json()?;
+            let batch = batch.unwrap_or_default();
             let done = batch.is_empty() || page >= total_pages;
-            projects.extend(batch);
+            items.extend(batch);
             if done {
-                return Ok(projects);
+                return Ok(items);
             }
             page += 1;
         }
