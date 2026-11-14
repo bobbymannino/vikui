@@ -4,7 +4,7 @@
 //! [`Reminder`]s with [`from_tasks`], and hand those to a view.
 
 use jiff::Timestamp;
-use vikunja::{RelativeReminder, RelativeTo, Task, TaskQuery};
+use vikunja::{Client, Error, RelativeReminder, RelativeTo, Task, TaskQuery, Token};
 
 /// One reminder, flattened out of its task.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -60,7 +60,15 @@ pub fn from_tasks(tasks: &[Task]) -> Vec<Reminder> {
 /// Where a list of reminders came from; gives the window its title and the tasks query.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
-    Project { id: i64, title: String },
+    Project {
+        id: i64,
+        title: String,
+    },
+    /// A saved filter; its stored query is fetched from the server.
+    SavedFilter {
+        filter_id: i64,
+        title: String,
+    },
     Filter(String),
     Search(String),
 }
@@ -69,18 +77,35 @@ impl Source {
     #[must_use]
     pub fn title(&self) -> String {
         match self {
-            Self::Project { title, .. } => format!("Reminders – {title}"),
+            Self::Project { title, .. } | Self::SavedFilter { title, .. } => {
+                format!("Reminders – {title}")
+            }
             Self::Filter(filter) => format!("Reminders – filter “{filter}”"),
             Self::Search(text) => format!("Reminders – search “{text}”"),
         }
     }
 
-    #[must_use]
-    pub fn query(&self) -> TaskQuery {
+    /// Fetch the tasks this source covers. Blocks; run it on a background task.
+    pub fn tasks(&self, client: &Client, token: &Token) -> Result<Vec<Task>, Error> {
+        let query = match self.direct_query() {
+            Some(query) => query,
+            None => match self {
+                Self::SavedFilter { filter_id, .. } => {
+                    client.saved_filter(token, *filter_id)?.query()
+                }
+                _ => TaskQuery::default(),
+            },
+        };
+        client.tasks(token, &query)
+    }
+
+    /// The query, when it is known without asking the server.
+    fn direct_query(&self) -> Option<TaskQuery> {
         match self {
-            Self::Project { id, .. } => TaskQuery::project(*id),
-            Self::Filter(filter) => TaskQuery::filter(filter.clone()),
-            Self::Search(text) => TaskQuery::search(text.clone()),
+            Self::Project { id, .. } => Some(TaskQuery::project(*id)),
+            Self::SavedFilter { .. } => None,
+            Self::Filter(filter) => Some(TaskQuery::filter(filter.clone())),
+            Self::Search(text) => Some(TaskQuery::search(text.clone())),
         }
     }
 }
@@ -223,10 +248,18 @@ mod tests {
             title: "Home".into(),
         };
         assert_eq!(project.title(), "Reminders – Home");
-        assert_eq!(project.query(), TaskQuery::project(4));
+        assert_eq!(project.direct_query(), Some(TaskQuery::project(4)));
         assert_eq!(
-            Source::Search("rent".into()).query().search.as_deref(),
-            Some("rent")
+            Source::Search("rent".into())
+                .direct_query()
+                .and_then(|query| query.search),
+            Some("rent".to_owned())
         );
+        let saved = Source::SavedFilter {
+            filter_id: 2,
+            title: "This week".into(),
+        };
+        assert_eq!(saved.title(), "Reminders – This week");
+        assert_eq!(saved.direct_query(), None);
     }
 }

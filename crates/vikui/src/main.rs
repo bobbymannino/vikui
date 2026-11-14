@@ -78,22 +78,26 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
     };
     let result = overview_ui::open(options, cx, move |window, cx| {
         let view = cx.new(|cx| ProjectsView::new(load_projects, window, cx));
-        cx.subscribe(&view, move |_, event, cx| match event {
-            ProjectsEvent::SessionExpired => expire(&session, cx),
-            ProjectsEvent::OpenProject { id, title } => {
-                let source = Source::Project {
+        cx.subscribe(&view, move |_, event, cx| {
+            let source = match event {
+                ProjectsEvent::SessionExpired => return expire(&session, cx),
+                ProjectsEvent::OpenProject { id, title } => Source::Project {
                     id: *id,
                     title: title.to_string(),
-                };
-                let expire = expire.clone();
-                let expired_session = Arc::clone(&session);
-                reminders_window::open(
-                    &source,
-                    Arc::clone(&session),
-                    move |cx| expire(&expired_session, cx),
-                    cx,
-                );
-            }
+                },
+                ProjectsEvent::OpenSavedFilter { filter_id, title } => Source::SavedFilter {
+                    filter_id: *filter_id,
+                    title: title.to_string(),
+                },
+            };
+            let expire = expire.clone();
+            let expired_session = Arc::clone(&session);
+            reminders_window::open(
+                &source,
+                Arc::clone(&session),
+                move |cx| expire(&expired_session, cx),
+                cx,
+            );
         })
         .detach();
         view.into()

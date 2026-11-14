@@ -25,10 +25,10 @@ pub fn open(
         }
     };
 
-    let query = source.query();
+    let source = source.clone();
     let load = cx.background_spawn(async move {
         session
-            .call(|client, token| client.tasks(token, &query))
+            .call(|client, token| source.tasks(client, token))
             .map(|tasks| reminders::from_tasks(&tasks))
     });
     cx.spawn(async move |cx| {

@@ -8,6 +8,8 @@ pub struct TaskQuery {
     pub filter: Option<String>,
     /// Free-text search over titles and descriptions.
     pub search: Option<String>,
+    /// Also match tasks where a filtered field is unset (`filter_include_nulls`).
+    pub include_nulls: bool,
 }
 
 impl TaskQuery {
@@ -16,7 +18,7 @@ impl TaskQuery {
     pub fn project(project_id: i64) -> Self {
         Self {
             filter: Some(format!("project = {project_id} && done = false")),
-            search: None,
+            ..Self::default()
         }
     }
 
@@ -24,15 +26,48 @@ impl TaskQuery {
     pub fn filter(filter: impl Into<String>) -> Self {
         Self {
             filter: Some(filter.into()),
-            search: None,
+            ..Self::default()
         }
     }
 
     #[must_use]
     pub fn search(text: impl Into<String>) -> Self {
         Self {
-            filter: None,
             search: Some(text.into()),
+            ..Self::default()
+        }
+    }
+}
+
+/// A saved filter (`GET /filters/{id}`): a named, stored task query.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct SavedFilter {
+    pub id: i64,
+    pub title: String,
+    #[serde(default)]
+    pub filters: SavedQuery,
+}
+
+/// The stored query of a [`SavedFilter`] (Vikunja's `TaskCollection`).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
+pub struct SavedQuery {
+    #[serde(default)]
+    pub filter: String,
+    #[serde(default)]
+    pub s: String,
+    #[serde(default)]
+    pub filter_include_nulls: bool,
+}
+
+impl SavedFilter {
+    /// The tasks query this filter stands for.
+    #[must_use]
+    pub fn query(&self) -> TaskQuery {
+        let non_empty = |value: &str| (!value.trim().is_empty()).then(|| value.to_owned());
+        TaskQuery {
+            filter: non_empty(&self.filters.filter),
+            search: non_empty(&self.filters.s),
+            include_nulls: self.filters.filter_include_nulls,
         }
     }
 }
@@ -179,6 +214,22 @@ mod tests {
     fn null_reminders_mean_none() {
         let task: Task = serde_json::from_str(r#"{"id":1,"title":"x","reminders":null}"#).unwrap();
         assert_eq!(task.reminders, []);
+    }
+
+    #[test]
+    fn saved_filter_becomes_a_task_query() {
+        let json = r#"{"id":3,"title":"Due this week","filters":{
+            "filter":"due_date < now/w+1w && done = false","s":"",
+            "filter_include_nulls":true,"sort_by":["due_date"]}}"#;
+        let filter: SavedFilter = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            filter.query(),
+            TaskQuery {
+                filter: Some("due_date < now/w+1w && done = false".into()),
+                search: None,
+                include_nulls: true,
+            }
+        );
     }
 
     #[test]

@@ -16,9 +16,11 @@ use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig};
 
 pub use error::Error;
-pub use project::Project;
+pub use project::{Project, ProjectKind};
 pub use server_url::{ServerUrl, ServerUrlError};
-pub use task::{RelativeReminder, RelativeTo, Task, TaskQuery, TaskReminder};
+pub use task::{
+    RelativeReminder, RelativeTo, SavedFilter, SavedQuery, Task, TaskQuery, TaskReminder,
+};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 const USER_AGENT: &str = concat!("vikui/", env!("CARGO_PKG_VERSION"));
@@ -188,7 +190,28 @@ impl Client {
         if let Some(search) = query.search.as_deref().filter(|s| !s.trim().is_empty()) {
             params.push(("s", search.to_owned()));
         }
+        if query.include_nulls {
+            params.push(("filter_include_nulls", "true".to_owned()));
+        }
         self.get_all_pages(token, "tasks", &params)
+    }
+
+    /// One saved filter, including the query it stores.
+    pub fn saved_filter(&self, token: &Token, filter_id: i64) -> Result<SavedFilter, Error> {
+        let mut response = self
+            .agent
+            .get(
+                self.server
+                    .endpoint(&format!("filters/{filter_id}"))
+                    .as_str(),
+            )
+            .header("Accept", ACCEPT_JSON)
+            .header("Authorization", &format!("Bearer {}", token.expose()))
+            .call()?;
+        if !response.status().is_success() {
+            return Err(error_from(&mut response));
+        }
+        Ok(response.body_mut().read_json()?)
     }
 
     /// `GET` a paginated collection, following pages until all items are fetched.

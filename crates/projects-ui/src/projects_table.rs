@@ -9,13 +9,16 @@ use gpui_kit::{
     App, Context, IntoElement, ParentElement as _, SharedString, Styled as _, Window, div,
     prelude::FluentBuilder as _,
 };
-use vikunja::Project;
+use vikunja::{Project, ProjectKind};
 
 /// One table row, prepared off the main thread so rendering only clones `SharedString`s.
 #[derive(Clone, Debug)]
 pub struct ProjectRow {
     pub id: i64,
+    /// A real project or a saved filter; Favorites is never listed.
+    pub kind: ProjectKind,
     pub title: SharedString,
+    pub kind_label: SharedString,
     pub parent: SharedString,
     pub identifier: SharedString,
     pub description: SharedString,
@@ -24,7 +27,8 @@ pub struct ProjectRow {
 }
 
 impl ProjectRow {
-    /// Build rows from an API response, dropping pseudo projects and resolving parent names.
+    /// Build rows from an API response: projects and saved filters, with parent names
+    /// resolved. The built-in Favorites list is left out.
     pub fn from_projects(projects: &[Project]) -> Vec<Self> {
         let titles: HashMap<i64, &str> = projects
             .iter()
@@ -32,11 +36,17 @@ impl ProjectRow {
             .collect();
         projects
             .iter()
-            .filter(|project| !project.is_pseudo())
+            .filter(|project| project.kind() != ProjectKind::Favorites)
             .enumerate()
             .map(|(order, project)| Self {
                 id: project.id,
+                kind: project.kind(),
                 title: project.title.clone().into(),
+                kind_label: match project.kind() {
+                    ProjectKind::SavedFilter { .. } => "Saved filter",
+                    ProjectKind::Project | ProjectKind::Favorites => "Project",
+                }
+                .into(),
                 parent: project
                     .parent_id()
                     .and_then(|id| titles.get(&id))
@@ -52,12 +62,19 @@ impl ProjectRow {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Col {
     Title,
+    Kind,
     Parent,
     Identifier,
     Description,
 }
 
-const COLUMNS: [Col; 4] = [Col::Title, Col::Parent, Col::Identifier, Col::Description];
+const COLUMNS: [Col; 5] = [
+    Col::Title,
+    Col::Kind,
+    Col::Parent,
+    Col::Identifier,
+    Col::Description,
+];
 
 impl Col {
     fn at(ix: usize) -> Option<Self> {
@@ -67,6 +84,7 @@ impl Col {
     fn text(self, row: &ProjectRow) -> &SharedString {
         match self {
             Self::Title => &row.title,
+            Self::Kind => &row.kind_label,
             Self::Parent => &row.parent,
             Self::Identifier => &row.identifier,
             Self::Description => &row.description,
@@ -135,6 +153,7 @@ impl TableDelegate for ProjectsTable {
     fn column(&self, col_ix: usize, _: &App) -> Column {
         let column = match Col::at(col_ix) {
             Some(Col::Title) => Column::new("title", "Title").width(260.),
+            Some(Col::Kind) => Column::new("kind", "Type").width(120.),
             Some(Col::Parent) => Column::new("parent", "Parent").width(180.),
             Some(Col::Identifier) => Column::new("identifier", "Identifier").width(110.),
             Some(Col::Description) => Column::new("description", "Description").width(420.),
@@ -219,7 +238,31 @@ mod tests {
     }
 
     #[test]
-    fn rows_skip_pseudo_projects_and_name_parents() {
+    fn rows_include_saved_filters_but_not_favorites() {
+        let rows = ProjectRow::from_projects(&[
+            project(-1, "Favorites", 0),
+            project(1, "Work", 0),
+            project(-3, "Due this week", 0),
+        ]);
+        let listed: Vec<_> = rows
+            .iter()
+            .map(|r| (r.title.as_ref(), r.kind_label.as_ref(), r.kind))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("Work", "Project", ProjectKind::Project),
+                (
+                    "Due this week",
+                    "Saved filter",
+                    ProjectKind::SavedFilter { filter_id: 2 }
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn rows_skip_favorites_and_name_parents() {
         let rows = ProjectRow::from_projects(&[
             project(-1, "Favorites", 0),
             project(1, "Work", 0),

@@ -20,12 +20,30 @@ pub struct Project {
     pub is_favorite: bool,
 }
 
+/// What a row from `GET /projects` actually is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProjectKind {
+    Project,
+    /// The built-in "Favorites" list (id `-1`).
+    Favorites,
+    /// A saved filter, listed as a pseudo project with id `-(filter_id + 1)`.
+    SavedFilter {
+        filter_id: i64,
+    },
+}
+
+/// Vikunja's `FavoritesPseudoProjectID`.
+const FAVORITES_ID: i64 = -1;
+
 impl Project {
-    /// Vikunja's built-in pseudo projects (such as "Favorites") have negative ids
-    /// and cannot hold tasks of their own.
     #[must_use]
-    pub fn is_pseudo(&self) -> bool {
-        self.id < 0
+    pub fn kind(&self) -> ProjectKind {
+        match self.id {
+            FAVORITES_ID => ProjectKind::Favorites,
+            // Mirrors Vikunja's `GetSavedFilterIDFromProjectID`.
+            id if id < FAVORITES_ID => ProjectKind::SavedFilter { filter_id: -id - 1 },
+            _ => ProjectKind::Project,
+        }
     }
 
     #[must_use]
@@ -79,9 +97,9 @@ mod tests {
              "position":65536,"created":"2024-01-01T00:00:00Z"}
         ]"#;
         let projects: Vec<Project> = serde_json::from_str(json).unwrap();
-        assert!(projects[0].is_pseudo());
+        assert_eq!(projects[0].kind(), ProjectKind::Favorites);
         let home = &projects[1];
-        assert!(!home.is_pseudo());
+        assert_eq!(home.kind(), ProjectKind::Project);
         assert_eq!(home.parent_id(), Some(1));
         assert!(home.is_favorite);
         assert_eq!(home.plain_description(), "Chores & errands");
@@ -95,5 +113,24 @@ mod tests {
         );
         assert_eq!(html_to_plain_text("a &lt;b&gt; &amp;amp;"), "a <b> &amp;");
         assert_eq!(html_to_plain_text(""), "");
+    }
+
+    #[test]
+    fn decodes_saved_filter_ids() {
+        let filter = |id| Project {
+            id,
+            title: String::new(),
+            description: String::new(),
+            identifier: String::new(),
+            parent_project_id: 0,
+            is_archived: false,
+            is_favorite: false,
+        };
+        assert_eq!(filter(-2).kind(), ProjectKind::SavedFilter { filter_id: 1 });
+        assert_eq!(
+            filter(-15).kind(),
+            ProjectKind::SavedFilter { filter_id: 14 }
+        );
+        assert_eq!(filter(3).kind(), ProjectKind::Project);
     }
 }

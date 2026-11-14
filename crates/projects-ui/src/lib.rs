@@ -16,7 +16,7 @@ use gpui_kit::{
     ParentElement as _, Render, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
     Subscription, Task, Window, div, prelude::FluentBuilder as _,
 };
-use vikunja::Project;
+use vikunja::{Project, ProjectKind};
 
 use projects_table::{ProjectRow, ProjectsTable};
 
@@ -34,6 +34,8 @@ pub enum ProjectsEvent {
     SessionExpired,
     /// The user opened a project (double-click, or Enter on the selected row).
     OpenProject { id: i64, title: SharedString },
+    /// The user opened a saved filter, the same way.
+    OpenSavedFilter { filter_id: i64, title: SharedString },
 }
 
 /// Register the projects view's key bindings. Call once at startup.
@@ -117,10 +119,7 @@ impl ProjectsView {
         self.loading = false;
         match result {
             Ok(rows) => {
-                self.summary = match rows.len() {
-                    1 => "1 project".into(),
-                    n => format!("{n} projects").into(),
-                };
+                self.summary = summary(&rows);
                 self.table.update(cx, |table, cx| {
                     table.delegate_mut().set_rows(rows);
                     cx.notify();
@@ -150,9 +149,14 @@ impl ProjectsView {
         let Some(row) = self.table.read(cx).delegate().row(row_ix) else {
             return;
         };
-        let event = ProjectsEvent::OpenProject {
-            id: row.id,
-            title: row.title.clone(),
+        let title = row.title.clone();
+        let event = match row.kind {
+            ProjectKind::SavedFilter { filter_id } => {
+                ProjectsEvent::OpenSavedFilter { filter_id, title }
+            }
+            ProjectKind::Project | ProjectKind::Favorites => {
+                ProjectsEvent::OpenProject { id: row.id, title }
+            }
         };
         cx.emit(event);
     }
@@ -168,6 +172,22 @@ impl ProjectsView {
             self.reload(window, cx);
         }
     }
+}
+
+/// "3 projects, 1 saved filter".
+fn summary(rows: &[ProjectRow]) -> SharedString {
+    let filters = rows
+        .iter()
+        .filter(|row| matches!(row.kind, ProjectKind::SavedFilter { .. }))
+        .count();
+    let projects = rows.len() - filters;
+    let plural = |n: usize, word: &str| format!("{n} {word}{}", if n == 1 { "" } else { "s" });
+    let mut text = plural(projects, "project");
+    if filters > 0 {
+        text.push_str(", ");
+        text.push_str(&plural(filters, "saved filter"));
+    }
+    text.into()
 }
 
 impl EventEmitter<ProjectsEvent> for ProjectsView {}
@@ -291,6 +311,16 @@ mod tests {
             .unwrap();
             handle
         })
+    }
+
+    #[test]
+    fn summary_counts_projects_and_saved_filters() {
+        let rows = |projects: &[Project]| ProjectRow::from_projects(projects);
+        assert_eq!(summary(&rows(&[project(1, "A")])), "1 project");
+        assert_eq!(
+            summary(&rows(&[project(1, "A"), project(2, "B"), project(-2, "F")])),
+            "2 projects, 1 saved filter"
+        );
     }
 
     #[gpui_kit::test]
@@ -420,6 +450,46 @@ mod tests {
             [ProjectsEvent::OpenProject {
                 id: 2,
                 title: "Home".into()
+            }]
+        );
+    }
+
+    #[gpui_kit::test]
+    async fn enter_opens_a_saved_filter(cx: &mut TestAppContext) {
+        let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = Rc::clone(&events);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let load: LoadProjects =
+                Arc::new(|| Ok(vec![project(1, "Work"), project(-3, "Due this week")]));
+            let (handle, view) =
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    cx.new(|cx| ProjectsView::new(load, window, cx))
+                })
+                .unwrap();
+            cx.subscribe(&view, move |_, event: &ProjectsEvent, _| {
+                seen.borrow_mut().push(event.clone());
+            })
+            .detach();
+            (handle, view)
+        });
+        cx.wait_for(handle, Duration::from_secs(5), |window, _| {
+            window.try_find_by_label("Saved filter").is_some()
+        })
+        .await;
+
+        cx.update(|cx| {
+            let table = view.read(cx).table.clone();
+            table.update(cx, |table, cx| table.set_selected_row(1, cx));
+        });
+        cx.update_window(handle, |_, window, cx| window.press("enter", cx))
+            .unwrap();
+        assert_eq!(
+            *events.borrow(),
+            [ProjectsEvent::OpenSavedFilter {
+                filter_id: 2,
+                title: "Due this week".into()
             }]
         );
     }
