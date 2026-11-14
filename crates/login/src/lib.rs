@@ -3,12 +3,14 @@
 //! Everything here blocks (network and OS keychain); call it from a background task.
 
 pub mod credentials;
+mod session;
 
 use std::fmt;
 
 use vikunja::{Client, LoginRequest, ServerUrl};
 
 pub use credentials::Credentials;
+pub use session::Session;
 
 /// What the user typed into the sign-in form.
 #[derive(Clone)]
@@ -48,7 +50,7 @@ pub fn sign_in(request: SignIn) -> Result<Credentials, Error> {
         totp,
     } = request;
 
-    let token = Client::new(server.clone()).login(&LoginRequest {
+    let auth = Client::new(server.clone()).login(&LoginRequest {
         username: &username,
         password: &password,
         totp: totp.as_deref(),
@@ -59,7 +61,8 @@ pub fn sign_in(request: SignIn) -> Result<Credentials, Error> {
         server,
         username,
         password,
-        token,
+        token: auth.token,
+        refresh_token: auth.refresh_token,
     };
     credentials::save(&credentials).map_err(Error::Keychain)?;
     Ok(credentials)

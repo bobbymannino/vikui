@@ -23,6 +23,10 @@ const USER_AGENT: &str = concat!("vikui/", env!("CARGO_PKG_VERSION"));
 const PAGE_SIZE: u32 = 50;
 /// Guards against a misbehaving server reporting endless pages.
 const MAX_PAGES: u32 = 1_000;
+/// Cookie Vikunja 2.0+ uses to hand out its rotating refresh token.
+const REFRESH_COOKIE: &str = "vikunja_refresh_token";
+/// Some servers (or proxies in front of them) reject `Accept: */*`, ureq's default.
+const ACCEPT_JSON: &str = "application/json";
 
 /// A bearer token returned by a successful login.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -45,6 +49,39 @@ impl fmt::Debug for Token {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("Token(<redacted>)")
     }
+}
+
+/// A refresh token (Vikunja 2.0+) that can be exchanged for a new [`Token`].
+///
+/// Every refresh rotates it; always keep the newest one.
+#[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct RefreshToken(String);
+
+impl RefreshToken {
+    #[must_use]
+    pub fn new(token: impl Into<String>) -> Self {
+        Self(token.into())
+    }
+
+    #[must_use]
+    pub fn expose(&self) -> &str {
+        &self.0
+    }
+}
+
+impl fmt::Debug for RefreshToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("RefreshToken(<redacted>)")
+    }
+}
+
+/// What a login or refresh hands back.
+#[derive(Clone, Debug)]
+pub struct Auth {
+    pub token: Token,
+    /// `None` on servers older than Vikunja 2.0, whose tokens are long-lived instead.
+    pub refresh_token: Option<RefreshToken>,
 }
 
 /// Credentials for `POST /login`.
@@ -71,7 +108,7 @@ impl fmt::Debug for LoginRequest<'_> {
 }
 
 #[derive(Deserialize)]
-struct LoginResponse {
+struct TokenResponse {
     token: Token,
 }
 
@@ -106,19 +143,28 @@ impl Client {
         &self.server
     }
 
-    /// Exchange credentials for a bearer token.
-    pub fn login(&self, request: &LoginRequest<'_>) -> Result<Token, Error> {
+    /// Exchange credentials for a bearer token (and, on Vikunja 2.0+, a refresh token).
+    pub fn login(&self, request: &LoginRequest<'_>) -> Result<Auth, Error> {
         let mut response = self
             .agent
             .post(self.server.endpoint("login").as_str())
+            .header("Accept", ACCEPT_JSON)
             .send_json(request)?;
+        auth_from(&mut response)
+    }
 
-        if response.status().is_success() {
-            let body: LoginResponse = response.body_mut().read_json()?;
-            Ok(body.token)
-        } else {
-            Err(error_from(&mut response))
-        }
+    /// Trade a refresh token for a new bearer token and a new (rotated) refresh token.
+    pub fn refresh(&self, refresh_token: &RefreshToken) -> Result<Auth, Error> {
+        let mut response = self
+            .agent
+            .post(self.server.endpoint("user/token/refresh").as_str())
+            .header("Accept", ACCEPT_JSON)
+            .header(
+                "Cookie",
+                &format!("{REFRESH_COOKIE}={}", refresh_token.expose()),
+            )
+            .send_empty()?;
+        auth_from(&mut response)
     }
 
     /// Every non-archived project the user can access, in the server's order.
@@ -132,6 +178,7 @@ impl Client {
             let mut response = self
                 .agent
                 .get(url.as_str())
+                .header("Accept", ACCEPT_JSON)
                 .header("Authorization", &format!("Bearer {}", token.expose()))
                 .query("page", page.to_string())
                 .query("per_page", PAGE_SIZE.to_string())
@@ -158,8 +205,64 @@ impl Client {
     }
 }
 
-fn error_from(response: &mut ureq::http::Response<ureq::Body>) -> Error {
+type Response = ureq::http::Response<ureq::Body>;
+
+fn auth_from(response: &mut Response) -> Result<Auth, Error> {
+    if !response.status().is_success() {
+        return Err(error_from(response));
+    }
+    let refresh_token = refresh_cookie(response.headers());
+    let body: TokenResponse = response.body_mut().read_json()?;
+    Ok(Auth {
+        token: body.token,
+        refresh_token,
+    })
+}
+
+fn refresh_cookie(headers: &ureq::http::HeaderMap) -> Option<RefreshToken> {
+    headers
+        .get_all("set-cookie")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .filter_map(|cookie| cookie.split(';').next())
+        .filter_map(|pair| pair.trim().split_once('='))
+        .find(|(name, value)| *name == REFRESH_COOKIE && !value.is_empty())
+        .map(|(_, value)| RefreshToken::new(value))
+}
+
+fn error_from(response: &mut Response) -> Error {
     let status = response.status().as_u16();
     let body = response.body_mut().read_to_string().unwrap_or_default();
+    log::debug!("HTTP {status} from server: {body}");
     Error::from_response(status, &body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ureq::http::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn reads_refresh_cookie_among_others() {
+        let mut headers = HeaderMap::new();
+        headers.append("set-cookie", HeaderValue::from_static("other=1; Path=/"));
+        headers.append(
+            "set-cookie",
+            HeaderValue::from_static(
+                "vikunja_refresh_token=abc.def; Path=/api/v1/user/token/refresh; HttpOnly",
+            ),
+        );
+        assert_eq!(refresh_cookie(&headers), Some(RefreshToken::new("abc.def")));
+    }
+
+    #[test]
+    fn ignores_missing_or_cleared_refresh_cookie() {
+        let mut headers = HeaderMap::new();
+        assert_eq!(refresh_cookie(&headers), None);
+        headers.append(
+            "set-cookie",
+            HeaderValue::from_static("vikunja_refresh_token=; Max-Age=0"),
+        );
+        assert_eq!(refresh_cookie(&headers), None);
+    }
 }

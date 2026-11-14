@@ -7,7 +7,7 @@ use std::fmt;
 
 use anyhow::Context as _;
 use serde::{Deserialize, Serialize};
-use vikunja::{ServerUrl, Token};
+use vikunja::{RefreshToken, ServerUrl, Token};
 
 const SERVICE: &str = "vikui";
 const ACCOUNT: &str = "session";
@@ -21,6 +21,9 @@ pub struct Credentials {
     pub username: String,
     pub password: String,
     pub token: Token,
+    /// Present on Vikunja 2.0+; absent in sessions saved before refresh support.
+    #[serde(default)]
+    pub refresh_token: Option<RefreshToken>,
 }
 
 impl fmt::Debug for Credentials {
@@ -30,6 +33,7 @@ impl fmt::Debug for Credentials {
             .field("username", &self.username)
             .field("password", &"<redacted>")
             .field("token", &self.token)
+            .field("refresh_token", &self.refresh_token)
             .finish()
     }
 }
@@ -75,11 +79,13 @@ mod tests {
             username: "ana".into(),
             password: "hunter2".into(),
             token: Token::new("jwt-secret"),
+            refresh_token: Some(RefreshToken::new("refresh-secret")),
         };
         let debug = format!("{creds:?}");
         assert!(debug.contains("ana"));
         assert!(!debug.contains("hunter2"));
         assert!(!debug.contains("jwt-secret"));
+        assert!(!debug.contains("refresh-secret"));
     }
 
     #[test]
@@ -89,10 +95,18 @@ mod tests {
             username: "ana".into(),
             password: "p".into(),
             token: Token::new("t"),
+            refresh_token: None,
         };
         let json = serde_json::to_string(&creds).unwrap();
         let back: Credentials = serde_json::from_str(&json).unwrap();
         assert_eq!(back.server, creds.server);
         assert_eq!(back.token, creds.token);
+    }
+
+    #[test]
+    fn loads_sessions_saved_before_refresh_tokens() {
+        let json = r#"{"server":"https://x.io","username":"ana","password":"p","token":"t"}"#;
+        let creds: Credentials = serde_json::from_str(json).unwrap();
+        assert!(creds.refresh_token.is_none());
     }
 }
