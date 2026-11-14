@@ -3,6 +3,7 @@
 //! Calls block the current thread; run them on a background executor.
 
 mod error;
+mod project;
 mod server_url;
 
 use std::fmt;
@@ -13,10 +14,15 @@ use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig};
 
 pub use error::Error;
+pub use project::Project;
 pub use server_url::{ServerUrl, ServerUrlError};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 const USER_AGENT: &str = concat!("vikui/", env!("CARGO_PKG_VERSION"));
+/// Vikunja's default (and usual maximum) page size.
+const PAGE_SIZE: u32 = 50;
+/// Guards against a misbehaving server reporting endless pages.
+const MAX_PAGES: u32 = 1_000;
 
 /// A bearer token returned by a successful login.
 #[derive(Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -111,9 +117,49 @@ impl Client {
             let body: LoginResponse = response.body_mut().read_json()?;
             Ok(body.token)
         } else {
-            let status = response.status().as_u16();
-            let body = response.body_mut().read_to_string().unwrap_or_default();
-            Err(Error::from_response(status, &body))
+            Err(error_from(&mut response))
         }
     }
+
+    /// Every non-archived project the user can access, in the server's order.
+    ///
+    /// Follows pagination until all pages are fetched.
+    pub fn projects(&self, token: &Token) -> Result<Vec<Project>, Error> {
+        let url = self.server.endpoint("projects");
+        let mut projects = Vec::new();
+        let mut page = 1;
+        loop {
+            let mut response = self
+                .agent
+                .get(url.as_str())
+                .header("Authorization", &format!("Bearer {}", token.expose()))
+                .query("page", page.to_string())
+                .query("per_page", PAGE_SIZE.to_string())
+                .call()?;
+            if !response.status().is_success() {
+                return Err(error_from(&mut response));
+            }
+
+            let total_pages = response
+                .headers()
+                .get("x-pagination-total-pages")
+                .and_then(|value| value.to_str().ok())
+                .and_then(|value| value.trim().parse::<u32>().ok())
+                .unwrap_or(1)
+                .min(MAX_PAGES);
+            let batch: Vec<Project> = response.body_mut().read_json()?;
+            let done = batch.is_empty() || page >= total_pages;
+            projects.extend(batch);
+            if done {
+                return Ok(projects);
+            }
+            page += 1;
+        }
+    }
+}
+
+fn error_from(response: &mut ureq::http::Response<ureq::Body>) -> Error {
+    let status = response.status().as_u16();
+    let body = response.body_mut().read_to_string().unwrap_or_default();
+    Error::from_response(status, &body)
 }
