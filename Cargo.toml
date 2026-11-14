@@ -13,7 +13,7 @@ publish = false
 # Internal crates
 login = { path = "crates/login" }
 login-ui = { path = "crates/login-ui" }
-overview = { path = "crates/overview" }
+overview-ui = { path = "crates/overview-ui" }
 vikunja = { path = "crates/vikunja" }
 
 # External crates

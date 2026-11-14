@@ -12,7 +12,7 @@ gpui-kit.workspace = true
 log.workspace = true
 login.workspace = true
 login-ui.workspace = true
-overview.workspace = true
+overview-ui.workspace = true
 
 [lints]
 workspace = true

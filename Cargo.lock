@@ -4782,7 +4782,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "overview"
+name = "overview-ui"
 version = "0.1.0"
 dependencies = [
  "gpui-kit",
@@ -7242,7 +7242,7 @@ dependencies = [
  "log",
  "login",
  "login-ui",
- "overview",
+ "overview-ui",
 ]
 
 [[package]]

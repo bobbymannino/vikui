@@ -50,7 +50,7 @@ fn open_login(cx: &mut App) {
 
 fn open_overview(cx: &mut App) {
     let options = window_options("Vikui", 960., 640., cx);
-    if let Err(err) = overview::open(options, cx) {
+    if let Err(err) = overview_ui::open(options, cx) {
         log::error!("failed to open main window: {err:#}");
     }
 }

@@ -1,5 +1,5 @@
 [package]
-name = "overview"
+name = "overview-ui"
 description = "Vikui's main window"
 version.workspace = true
 edition.workspace = true
