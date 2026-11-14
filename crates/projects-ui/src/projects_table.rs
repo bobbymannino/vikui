@@ -14,6 +14,7 @@ use vikunja::Project;
 /// One table row, prepared off the main thread so rendering only clones `SharedString`s.
 #[derive(Clone, Debug)]
 pub struct ProjectRow {
+    pub id: i64,
     pub title: SharedString,
     pub parent: SharedString,
     pub identifier: SharedString,
@@ -34,6 +35,7 @@ impl ProjectRow {
             .filter(|project| !project.is_pseudo())
             .enumerate()
             .map(|(order, project)| Self {
+                id: project.id,
                 title: project.title.clone().into(),
                 parent: project
                     .parent_id()
@@ -92,6 +94,10 @@ impl ProjectsTable {
 
     pub fn rows(&self) -> &[ProjectRow] {
         &self.rows
+    }
+
+    pub fn row(&self, row_ix: usize) -> Option<&ProjectRow> {
+        self.rows.get(row_ix)
     }
 
     fn row_text(&self, row_ix: usize, col_ix: usize) -> Option<&SharedString> {

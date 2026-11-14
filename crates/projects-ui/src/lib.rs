@@ -8,19 +8,19 @@ use std::sync::Arc;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::Button;
-use gpui_kit::component::table::{DataTable, TableState};
+use gpui_kit::component::table::{DataTable, TableEvent, TableState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
 use gpui_kit::{
     App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     InteractiveElement as _, IntoElement, KeyBinding, KeyBindingContextPredicate,
     ParentElement as _, Render, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Task, Window, div, prelude::FluentBuilder as _,
+    Subscription, Task, Window, div, prelude::FluentBuilder as _,
 };
 use vikunja::Project;
 
 use projects_table::{ProjectRow, ProjectsTable};
 
-gpui_kit::actions!(projects, [Refresh]);
+gpui_kit::actions!(projects, [Refresh, OpenProject]);
 
 const CONTEXT: &str = "Projects";
 
@@ -32,6 +32,8 @@ pub type LoadProjects = Arc<dyn Fn() -> Result<Vec<Project>, vikunja::Error> + S
 pub enum ProjectsEvent {
     /// The server rejected the session and it could not be renewed; sign in again.
     SessionExpired,
+    /// The user opened a project (double-click, or Enter on the selected row).
+    OpenProject { id: i64, title: SharedString },
 }
 
 /// Register the projects view's key bindings. Call once at startup.
@@ -43,6 +45,7 @@ pub fn init(cx: &mut App) {
         Ok(binding) => cx.bind_keys([binding]),
         Err(err) => log::error!("invalid refresh key binding: {err}"),
     }
+    cx.bind_keys([KeyBinding::new("enter", OpenProject, Some(CONTEXT))]);
 }
 
 /// A table of the user's projects with a refresh control.
@@ -55,6 +58,7 @@ pub struct ProjectsView {
     summary: SharedString,
     /// Dropping the task discards a superseded load's result.
     load_task: Option<Task<()>>,
+    _table_events: Subscription,
 }
 
 impl ProjectsView {
@@ -62,6 +66,11 @@ impl ProjectsView {
     pub fn new(load_projects: LoadProjects, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let table = cx.new(|cx| TableState::new(ProjectsTable::default(), window, cx));
         table.read(cx).focus_handle(cx).focus(window, cx);
+        let table_events = cx.subscribe(&table, |this, _, event: &TableEvent, cx| {
+            if let TableEvent::DoubleClickedRow(row_ix) = event {
+                this.open_row(*row_ix, cx);
+            }
+        });
 
         let mut this = Self {
             focus_handle: cx.focus_handle(),
@@ -71,6 +80,7 @@ impl ProjectsView {
             error: None,
             summary: SharedString::default(),
             load_task: None,
+            _table_events: table_events,
         };
         this.reload(window, cx);
         this
@@ -136,6 +146,23 @@ impl ProjectsView {
         cx.notify();
     }
 
+    fn open_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        let Some(row) = self.table.read(cx).delegate().row(row_ix) else {
+            return;
+        };
+        let event = ProjectsEvent::OpenProject {
+            id: row.id,
+            title: row.title.clone(),
+        };
+        cx.emit(event);
+    }
+
+    fn on_open_project(&mut self, _: &OpenProject, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(row_ix) = self.table.read(cx).selected_row() {
+            self.open_row(row_ix, cx);
+        }
+    }
+
     fn on_refresh(&mut self, _: &Refresh, window: &mut Window, cx: &mut Context<Self>) {
         if !self.loading {
             self.reload(window, cx);
@@ -160,6 +187,7 @@ impl Render for ProjectsView {
             .key_context(CONTEXT)
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_refresh))
+            .on_action(cx.listener(Self::on_open_project))
             .size_full()
             .gap_4()
             .p_6()
@@ -355,5 +383,44 @@ mod tests {
         });
         cx.run_until_parked();
         assert_eq!(*events.borrow(), [ProjectsEvent::SessionExpired]);
+    }
+
+    #[gpui_kit::test]
+    async fn enter_opens_the_selected_project(cx: &mut TestAppContext) {
+        let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = Rc::clone(&events);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let load: LoadProjects = Arc::new(|| Ok(vec![project(1, "Work"), project(2, "Home")]));
+            let (handle, view) =
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    cx.new(|cx| ProjectsView::new(load, window, cx))
+                })
+                .unwrap();
+            cx.subscribe(&view, move |_, event: &ProjectsEvent, _| {
+                seen.borrow_mut().push(event.clone());
+            })
+            .detach();
+            (handle, view)
+        });
+        cx.wait_for(handle, Duration::from_secs(5), |window, _| {
+            window.try_find_by_label("Home").is_some()
+        })
+        .await;
+
+        cx.update(|cx| {
+            let table = view.read(cx).table.clone();
+            table.update(cx, |table, cx| table.set_selected_row(1, cx));
+        });
+        cx.update_window(handle, |_, window, cx| window.press("enter", cx))
+            .unwrap();
+        assert_eq!(
+            *events.borrow(),
+            [ProjectsEvent::OpenProject {
+                id: 2,
+                title: "Home".into()
+            }]
+        );
     }
 }
