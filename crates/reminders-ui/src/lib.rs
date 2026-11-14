@@ -47,7 +47,7 @@ impl RemindersView {
             error: None,
         };
         match reminders {
-            Some(reminders) => this.set_reminders(&reminders, cx),
+            Some(reminders) => this.set_reminders(&reminders, None, cx),
             None => this.table.update(cx, |table, cx| {
                 table.delegate_mut().set_loading(true);
                 cx.notify();
@@ -57,21 +57,22 @@ impl RemindersView {
     }
 
     /// Replace the listed reminders.
-    pub fn set_reminders(&mut self, reminders: &[Reminder], cx: &mut Context<Self>) {
+    ///
+    /// `matched_tasks` is how many tasks the reminders came from, if known. It explains an
+    /// empty list: tasks can match a project or filter without having any reminders.
+    pub fn set_reminders(
+        &mut self,
+        reminders: &[Reminder],
+        matched_tasks: Option<usize>,
+        cx: &mut Context<Self>,
+    ) {
         let rows = ReminderRow::from_reminders(reminders, Timestamp::now(), &TimeZone::system());
         let upcoming = rows.iter().filter(|row| !row.inactive).count();
-        self.summary = format!(
-            "{} {}, {upcoming} upcoming",
-            rows.len(),
-            if rows.len() == 1 {
-                "reminder"
-            } else {
-                "reminders"
-            }
-        )
-        .into();
+        self.summary = summary(rows.len(), upcoming, matched_tasks);
+        let empty_message = empty_message(matched_tasks);
         self.error = None;
         self.table.update(cx, |table, cx| {
+            table.delegate_mut().set_empty_message(empty_message);
             table.delegate_mut().set_rows(rows);
             cx.notify();
         });
@@ -86,6 +87,31 @@ impl RemindersView {
             cx.notify();
         });
         cx.notify();
+    }
+}
+
+fn plural(count: usize, word: &str) -> String {
+    format!("{count} {word}{}", if count == 1 { "" } else { "s" })
+}
+
+/// "2 reminders on 5 tasks, 1 upcoming".
+fn summary(reminders: usize, upcoming: usize, matched_tasks: Option<usize>) -> SharedString {
+    let tasks = matched_tasks.map_or_else(String::new, |tasks| {
+        format!(" on {}", plural(tasks, "task"))
+    });
+    format!(
+        "{}{tasks}, {upcoming} upcoming",
+        plural(reminders, "reminder")
+    )
+    .into()
+}
+
+fn empty_message(matched_tasks: Option<usize>) -> SharedString {
+    match matched_tasks {
+        None => "No reminders.".into(),
+        Some(0) => "No tasks match.".into(),
+        Some(1) => "The matching task has no reminders.".into(),
+        Some(tasks) => format!("None of the {tasks} matching tasks have reminders.").into(),
     }
 }
 
@@ -222,7 +248,7 @@ mod tests {
         let soon = Timestamp::now() + jiff::SignedDuration::from_hours(1);
         cx.update(|cx| {
             view.update(cx, |view, cx| {
-                view.set_reminders(&[reminder(soon, "Call landlord")], cx);
+                view.set_reminders(&[reminder(soon, "Call landlord")], Some(1), cx);
             });
         });
         cx.update_window(handle, |_, window, cx| {
@@ -233,6 +259,32 @@ mod tests {
                     .try_find_by_label("Couldn't load reminders: Server unavailable")
                     .is_none()
             );
+        })
+        .unwrap();
+    }
+
+    #[test]
+    fn summary_and_empty_message_mention_matched_tasks() {
+        assert_eq!(summary(2, 1, Some(5)), "2 reminders on 5 tasks, 1 upcoming");
+        assert_eq!(summary(1, 0, None), "1 reminder, 0 upcoming");
+        assert_eq!(empty_message(None), "No reminders.");
+        assert_eq!(empty_message(Some(0)), "No tasks match.");
+        assert_eq!(
+            empty_message(Some(3)),
+            "None of the 3 matching tasks have reminders."
+        );
+    }
+
+    #[gpui_kit::test]
+    fn explains_tasks_without_reminders(cx: &mut TestAppContext) {
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            open(options(), "Reminders – Today", None, cx).unwrap()
+        });
+        cx.update(|cx| view.update(cx, |view, cx| view.set_reminders(&[], Some(3), cx)));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find_by_label("None of the 3 matching tasks have reminders.");
         })
         .unwrap();
     }

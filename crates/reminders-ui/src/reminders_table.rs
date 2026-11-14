@@ -2,11 +2,12 @@
 
 use std::cmp::Ordering;
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::{
-    App, Context, IntoElement, ParentElement as _, SharedString, Styled as _, Window, div,
-    prelude::FluentBuilder as _,
+    App, Context, InteractiveElement as _, IntoElement, ParentElement as _, Role, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _,
 };
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
@@ -105,16 +106,32 @@ impl Col {
     }
 }
 
-#[derive(Default)]
 pub struct RemindersTable {
     rows: Vec<ReminderRow>,
     loading: bool,
+    /// Shown when there are no rows.
+    empty_message: SharedString,
     sort: Option<(Col, ColumnSort)>,
+}
+
+impl Default for RemindersTable {
+    fn default() -> Self {
+        Self {
+            rows: Vec::new(),
+            loading: false,
+            empty_message: "No reminders.".into(),
+            sort: None,
+        }
+    }
 }
 
 impl RemindersTable {
     pub fn set_loading(&mut self, loading: bool) {
         self.loading = loading;
+    }
+
+    pub fn set_empty_message(&mut self, message: SharedString) {
+        self.empty_message = message;
     }
 
     pub fn set_rows(&mut self, rows: Vec<ReminderRow>) {
@@ -226,10 +243,14 @@ impl TableDelegate for RemindersTable {
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         h_flex()
+            .id("reminders-empty")
+            .role(Role::Status)
+            .aria_label(self.empty_message.clone())
             .size_full()
             .justify_center()
             .text_color(cx.theme().muted_foreground)
-            .child("No reminders.")
+            .child(self.empty_message.clone())
+            .test_support()
     }
 
     fn loading(&self, _: &App) -> bool {

@@ -36,13 +36,15 @@ pub fn open(
                     tasks.len(),
                     reminders.len()
                 );
-                reminders
+                (reminders, tasks.len())
             })
     });
     cx.spawn(async move |cx| {
         let result = load.await;
         cx.update(|cx| match result {
-            Ok(reminders) => view.update(cx, |view, cx| view.set_reminders(&reminders, cx)),
+            Ok((reminders, tasks)) => view.update(cx, |view, cx| {
+                view.set_reminders(&reminders, Some(tasks), cx);
+            }),
             Err(vikunja::Error::Unauthorized) => on_session_expired(cx),
             Err(err) => {
                 log::warn!("failed to load reminders: {err:#}");
