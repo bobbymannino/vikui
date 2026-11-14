@@ -104,7 +104,7 @@ impl LoginWindow {
                 this.submitting = false;
                 match result {
                     Ok(_) => {
-                        super::main_window::open(cx);
+                        crate::open_overview(cx);
                         window.remove_window();
                     }
                     Err(login::Error::Api(vikunja::Error::TotpRequired)) if !this.needs_totp => {

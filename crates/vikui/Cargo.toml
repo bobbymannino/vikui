@@ -11,6 +11,7 @@ env_logger.workspace = true
 gpui-kit.workspace = true
 log.workspace = true
 login.workspace = true
+overview.workspace = true
 vikunja.workspace = true
 
 [lints]

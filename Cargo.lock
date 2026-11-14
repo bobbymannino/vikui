@@ -4772,6 +4772,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "overview"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+]
+
+[[package]]
 name = "parking"
 version = "2.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7224,6 +7231,7 @@ dependencies = [
  "gpui-kit",
  "log",
  "login",
+ "overview",
  "vikunja",
 ]
 

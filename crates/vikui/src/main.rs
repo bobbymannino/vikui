@@ -33,7 +33,7 @@ fn open_initial_window(cx: &mut App) {
         };
         cx.update(|cx| {
             if signed_in {
-                views::main_window::open(cx);
+                open_overview(cx);
             } else {
                 views::login_window::open(cx);
             }
@@ -41,6 +41,13 @@ fn open_initial_window(cx: &mut App) {
         });
     })
     .detach();
+}
+
+pub(crate) fn open_overview(cx: &mut App) {
+    let options = window_options("Vikui", 960., 640., cx);
+    if let Err(err) = overview::open(options, cx) {
+        log::error!("failed to open main window: {err:#}");
+    }
 }
 
 /// macOS keeps apps alive with no windows; Vikui has nothing to show without one.

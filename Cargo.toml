@@ -12,6 +12,7 @@ publish = false
 [workspace.dependencies]
 # Internal crates
 login = { path = "crates/login" }
+overview = { path = "crates/overview" }
 vikunja = { path = "crates/vikunja" }
 
 # External crates
