@@ -1,8 +1,6 @@
 // Release builds on Windows are GUI apps: don't open a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod views;
-
 use gpui_kit::component::Theme;
 use gpui_kit::{App, AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
 
@@ -35,7 +33,7 @@ fn open_initial_window(cx: &mut App) {
             if signed_in {
                 open_overview(cx);
             } else {
-                views::login_window::open(cx);
+                open_login(cx);
             }
             cx.activate(true);
         });
@@ -43,7 +41,14 @@ fn open_initial_window(cx: &mut App) {
     .detach();
 }
 
-pub(crate) fn open_overview(cx: &mut App) {
+fn open_login(cx: &mut App) {
+    let options = window_options("Sign in – Vikui", 480., 560., cx);
+    if let Err(err) = login_ui::open(options, cx, |_, cx| open_overview(cx)) {
+        log::error!("failed to open login window: {err:#}");
+    }
+}
+
+fn open_overview(cx: &mut App) {
     let options = window_options("Vikui", 960., 640., cx);
     if let Err(err) = overview::open(options, cx) {
         log::error!("failed to open main window: {err:#}");
@@ -61,12 +66,7 @@ fn quit_when_last_window_closes(cx: &mut App) {
 }
 
 /// Centred window options with a sensible minimum size.
-pub(crate) fn window_options(
-    title: &'static str,
-    width: f32,
-    height: f32,
-    cx: &App,
-) -> WindowOptions {
+fn window_options(title: &'static str, width: f32, height: f32, cx: &App) -> WindowOptions {
     WindowOptions {
         window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
             None,

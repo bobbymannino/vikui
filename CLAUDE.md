@@ -5,7 +5,12 @@ Vikui: a cross-platform GPUI desktop client for Vikunja (see `README.md`).
 ## Layout
 
 - Cargo workspace; crates live in `crates/`.
-- `crates/vikui` is the app binary and the workspace default member.
+- `crates/vikui` is the app binary and the workspace default member; it only boots the app and routes between windows.
+- `crates/vikunja`: blocking Vikunja REST client, no UI.
+- `crates/login`: sign-in and keychain session storage, no UI.
+- `crates/login-ui`: sign-in window; reports success via callback, never opens other windows itself.
+- `crates/overview`: main window.
+- UI crates must not depend on each other; wire them together in `crates/vikui`.
 - Shared `version`/`edition` live in root `Cargo.toml` `[workspace.package]`; new crates inherit them.
 - Put shared dependency versions in root `[workspace.dependencies]` once a second crate needs them.
 

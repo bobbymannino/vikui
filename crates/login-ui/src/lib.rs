@@ -1,17 +1,22 @@
+//! Vikui's sign-in window.
+
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::form::{field, v_form};
 use gpui_kit::component::input::{Input, InputContentType, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, v_flex};
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, px,
+    AnyWindowHandle, App, AppContext as _, Context, Entity, FontWeight, IntoElement,
+    ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, WindowOptions,
+    div, prelude::FluentBuilder as _, px,
 };
-use login::SignIn;
+use login::{Credentials, SignIn};
 use vikunja::ServerUrl;
 
+type OnSignedIn = Box<dyn FnOnce(Credentials, &mut App)>;
+
 /// Sign-in form shown on launch when no credentials are stored.
-pub(crate) struct LoginWindow {
+pub struct LoginWindow {
     server: Entity<InputState>,
     username: Entity<InputState>,
     password: Entity<InputState>,
@@ -20,11 +25,13 @@ pub(crate) struct LoginWindow {
     needs_totp: bool,
     submitting: bool,
     error: Option<SharedString>,
+    /// Called once, after credentials are saved; the login window then closes itself.
+    on_signed_in: Option<OnSignedIn>,
     _subscriptions: Vec<Subscription>,
 }
 
 impl LoginWindow {
-    fn new(window: &mut Window, cx: &mut Context<Self>) -> Self {
+    fn new(on_signed_in: OnSignedIn, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let server =
             cx.new(|cx| InputState::new(window, cx).placeholder("https://tasks.example.com"));
         let username = cx.new(|cx| InputState::new(window, cx));
@@ -53,6 +60,7 @@ impl LoginWindow {
             needs_totp: false,
             submitting: false,
             error: None,
+            on_signed_in: Some(on_signed_in),
             _subscriptions: subscriptions,
         }
     }
@@ -103,8 +111,10 @@ impl LoginWindow {
             this.update_in(cx, |this, window, cx| {
                 this.submitting = false;
                 match result {
-                    Ok(_) => {
-                        crate::open_overview(cx);
+                    Ok(credentials) => {
+                        if let Some(on_signed_in) = this.on_signed_in.take() {
+                            on_signed_in(credentials, cx);
+                        }
                         window.remove_window();
                     }
                     Err(login::Error::Api(vikunja::Error::TotpRequired)) if !this.needs_totp => {
@@ -240,11 +250,16 @@ impl Render for LoginWindow {
     }
 }
 
-pub(crate) fn open(cx: &mut App) {
-    let options = crate::window_options("Sign in – Vikui", 480., 560., cx);
-    if let Err(err) = gpui_kit::open_window(options, cx, |window, cx| {
-        cx.new(|cx| LoginWindow::new(window, cx))
-    }) {
-        log::error!("failed to open login window: {err:#}");
-    }
+/// Open the sign-in window. `on_signed_in` runs after a successful sign-in, just before
+/// the window closes, so the caller can open whatever comes next.
+pub fn open(
+    options: WindowOptions,
+    cx: &mut App,
+    on_signed_in: impl FnOnce(Credentials, &mut App) + 'static,
+) -> gpui_kit::Result<AnyWindowHandle> {
+    let on_signed_in: OnSignedIn = Box::new(on_signed_in);
+    let (handle, _) = gpui_kit::open_window(options, cx, |window, cx| {
+        cx.new(|cx| LoginWindow::new(on_signed_in, window, cx))
+    })?;
+    Ok(handle)
 }
