@@ -1,0 +1,55 @@
+# Agent Instructions
+
+Vikui: a cross-platform GPUI desktop client for Vikunja (see `README.md`).
+
+## Layout
+
+- Cargo workspace; crates live in `crates/`.
+- `crates/vikui` is the app binary and the workspace default member.
+- Shared `version`/`edition` live in root `Cargo.toml` `[workspace.package]`; new crates inherit them.
+- Put shared dependency versions in root `[workspace.dependencies]` once a second crate needs them.
+
+## GPUI Kit
+
+- Depend on `gpui-kit` only (keep it on the latest release); never add `gpui`, `gpui-component` or `gpui-base` directly.
+- Prefer existing `gpui_kit::component` widgets over hand-built `div()` controls.
+- Use theme colors/spacing from the active theme; never hard-code colors or font sizes.
+- Docs: https://gpui-kit.com and https://docs.rs/gpui-kit; read source in `~/.cargo/registry/src/*/gpui-kit-*` when unsure.
+- UI tests: enable `gpui-kit = { ..., features = ["test-support"] }` under `[dev-dependencies]` and use `#[gpui_kit::test]` with `gpui_kit::test::*`.
+
+## Performance
+
+- Keep `render` cheap and side-effect free: no I/O, allocation-heavy work or blocking calls.
+- Run network/disk work with `cx.spawn` / `cx.background_spawn`; update entities on completion.
+- Call `cx.notify()` only when state actually changed.
+- Split large views into separate entities so updates re-render only what changed.
+- Use virtualized lists (`uniform_list` / component `List`/`Table`) for task collections.
+- Use `SharedString` for text passed into elements; avoid per-frame `String` clones.
+- Never `unwrap()`/`expect()` on network or user data; surface errors in the UI.
+
+## Cross-Platform (Linux, macOS, Windows)
+
+- Use `std::path`/`PathBuf` and the `dirs` crate for config/data paths; never hard-code separators or home paths.
+- Gate OS-specific code with `#[cfg(target_os = "...")]` and provide every platform's branch.
+- Bind shortcuts with `secondary-` (Cmd on macOS, Ctrl elsewhere), not `cmd-` or `ctrl-`.
+- Do not assume window decorations, titlebar height or a single display scale factor.
+
+## Accessibility
+
+- Every interactive element needs a stable `id` and an accessible name (`.aria_label(...)` / component `accessibility_label(...)`).
+- Set `.role(...)` on custom interactive `div`s.
+- All actions must be reachable by keyboard; use `track_focus`, `tab_index` and `on_action` with key bindings.
+- Keep focus visible and order logical; restore focus when dialogs close.
+- Never convey state by color alone; meet WCAG AA contrast in light and dark themes.
+- Assert labels/roles in UI tests with `find_by_label` / `find_all_by_role`.
+
+## Code Style
+
+- Edition 2024; code must be `cargo fmt` clean and `clippy -D warnings` clean.
+- One view/entity per module; keep `main.rs` to app bootstrap.
+- Keep Vikunja API types and HTTP client separate from UI code.
+- No `unsafe` without a `// SAFETY:` comment.
+
+## Before Finishing
+
+- Run check, clippy, fmt and relevant tests from the table above.
