@@ -8,7 +8,9 @@ use login::Credentials;
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    gpui_kit::application().run(|cx| {
+    // Components load their icons from the app's asset source; without this they render blank.
+    let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
+    app.run(|cx| {
         gpui_kit::init(cx);
         projects_ui::init(cx);
         Theme::sync_system_appearance(None, cx);
