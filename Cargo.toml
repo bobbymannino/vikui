@@ -10,6 +10,20 @@ rust-version = "1.100"
 publish = false
 
 [workspace.dependencies]
+# Internal crates
+vikunja = { path = "crates/vikunja" }
+
+# External crates
+anyhow = "1"
+env_logger = "0.11"
+gpui-kit = "0.9.1"
+keyring = "4.2.0"
+log = "0.4"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+ureq = { version = "3", features = ["json", "platform-verifier"] }
+url = "2"
 
 # ---------------------------------------------------------------------------
 # Lints (crates opt in with `[lints] workspace = true`)
