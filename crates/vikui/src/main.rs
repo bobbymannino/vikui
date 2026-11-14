@@ -1,7 +1,6 @@
 // Release builds on Windows are GUI apps: don't open a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-mod credentials;
 mod views;
 
 use gpui_kit::component::Theme;
@@ -23,7 +22,7 @@ fn main() {
 ///
 /// The keychain read can block (or prompt), so it runs off the main thread.
 fn open_initial_window(cx: &mut App) {
-    let load = cx.background_spawn(async { credentials::load() });
+    let load = cx.background_spawn(async { login::credentials::load() });
     cx.spawn(async move |cx| {
         let signed_in = match load.await {
             Ok(credentials) => credentials.is_some(),

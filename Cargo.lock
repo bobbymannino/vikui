@@ -3763,6 +3763,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "login"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "keyring",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+ "vikunja",
+]
+
+[[package]]
 name = "loop9"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7208,14 +7220,10 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 name = "vikui"
 version = "0.1.0"
 dependencies = [
- "anyhow",
  "env_logger",
  "gpui-kit",
- "keyring",
  "log",
- "serde",
- "serde_json",
- "thiserror 2.0.21",
+ "login",
  "vikunja",
 ]
 

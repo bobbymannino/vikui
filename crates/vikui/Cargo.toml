@@ -7,14 +7,10 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-anyhow.workspace = true
 env_logger.workspace = true
 gpui-kit.workspace = true
-keyring.workspace = true
 log.workspace = true
-serde.workspace = true
-serde_json.workspace = true
-thiserror.workspace = true
+login.workspace = true
 vikunja.workspace = true
 
 [lints]

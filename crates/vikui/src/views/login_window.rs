@@ -7,9 +7,8 @@ use gpui_kit::{
     App, AppContext as _, Context, Entity, FontWeight, IntoElement, ParentElement as _, Render,
     SharedString, Styled as _, Subscription, Window, div, prelude::FluentBuilder as _, px,
 };
-use vikunja::{Client, LoginRequest, ServerUrl};
-
-use crate::credentials::{self, Credentials};
+use login::SignIn;
+use vikunja::ServerUrl;
 
 /// Sign-in form shown on launch when no credentials are stored.
 pub(crate) struct LoginWindow {
@@ -91,18 +90,24 @@ impl LoginWindow {
         self.error = None;
         cx.notify();
 
-        let task =
-            cx.background_spawn(async move { authenticate(server, username, password, totp) });
+        let task = cx.background_spawn(async move {
+            login::sign_in(SignIn {
+                server,
+                username,
+                password,
+                totp,
+            })
+        });
         cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
             this.update_in(cx, |this, window, cx| {
                 this.submitting = false;
                 match result {
-                    Ok(()) => {
+                    Ok(_) => {
                         super::main_window::open(cx);
                         window.remove_window();
                     }
-                    Err(LoginError::Api(vikunja::Error::TotpRequired)) if !this.needs_totp => {
+                    Err(login::Error::Api(vikunja::Error::TotpRequired)) if !this.needs_totp => {
                         this.needs_totp = true;
                         this.error = None;
                         this.totp.update(cx, |input, cx| input.focus(window, cx));
@@ -111,8 +116,8 @@ impl LoginWindow {
                     Err(err) => {
                         log::warn!("sign-in failed: {err:#}");
                         let focus = match &err {
-                            LoginError::Api(vikunja::Error::TotpRequired) => this.totp.clone(),
-                            LoginError::Api(vikunja::Error::InvalidCredentials) => {
+                            login::Error::Api(vikunja::Error::TotpRequired) => this.totp.clone(),
+                            login::Error::Api(vikunja::Error::InvalidCredentials) => {
                                 this.password.clone()
                             }
                             _ => this.server.clone(),
@@ -137,38 +142,6 @@ impl LoginWindow {
         focus.update(cx, |input, cx| input.focus(window, cx));
         cx.notify();
     }
-}
-
-#[derive(Debug, thiserror::Error)]
-enum LoginError {
-    #[error(transparent)]
-    Api(#[from] vikunja::Error),
-    #[error("Signed in, but the credentials could not be saved to the system keychain.")]
-    Keychain(#[source] anyhow::Error),
-}
-
-/// Runs on a background thread: network round-trip plus keychain write.
-fn authenticate(
-    server: ServerUrl,
-    username: String,
-    password: String,
-    totp: Option<String>,
-) -> Result<(), LoginError> {
-    let client = Client::new(server.clone());
-    let token = client.login(&LoginRequest {
-        username: &username,
-        password: &password,
-        totp: totp.as_deref(),
-        long_token: true,
-    })?;
-
-    credentials::save(&Credentials {
-        server,
-        username,
-        password,
-        token,
-    })
-    .map_err(LoginError::Keychain)
 }
 
 impl Render for LoginWindow {

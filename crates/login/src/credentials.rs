@@ -16,7 +16,7 @@ const ACCOUNT: &str = "session";
 ///
 /// The password is kept so the session can be renewed once the token expires.
 #[derive(Clone, Serialize, Deserialize)]
-pub(crate) struct Credentials {
+pub struct Credentials {
     pub server: ServerUrl,
     pub username: String,
     pub password: String,
@@ -39,7 +39,7 @@ fn entry() -> anyhow::Result<keyring::Entry> {
 }
 
 /// Load saved credentials; `Ok(None)` when nobody is signed in.
-pub(crate) fn load() -> anyhow::Result<Option<Credentials>> {
+pub fn load() -> anyhow::Result<Option<Credentials>> {
     let secret = match entry()?.get_password() {
         Ok(secret) => secret,
         Err(keyring::Error::NoEntry) => return Ok(None),
@@ -49,7 +49,7 @@ pub(crate) fn load() -> anyhow::Result<Option<Credentials>> {
     Ok(Some(credentials))
 }
 
-pub(crate) fn save(credentials: &Credentials) -> anyhow::Result<()> {
+pub fn save(credentials: &Credentials) -> anyhow::Result<()> {
     let secret = serde_json::to_string(credentials).context("failed to encode credentials")?;
     entry()?
         .set_password(&secret)
@@ -57,8 +57,7 @@ pub(crate) fn save(credentials: &Credentials) -> anyhow::Result<()> {
 }
 
 /// Remove saved credentials. Succeeds if none were stored.
-#[expect(dead_code, reason = "used by sign-out, which is not built yet")]
-pub(crate) fn clear() -> anyhow::Result<()> {
+pub fn clear() -> anyhow::Result<()> {
     match entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
         Err(err) => Err(err).context("failed to delete credentials"),
