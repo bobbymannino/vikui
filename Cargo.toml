@@ -6,3 +6,94 @@ default-members = ["crates/vikui"]
 [workspace.package]
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.100"
+publish = false
+
+[workspace.dependencies]
+
+# ---------------------------------------------------------------------------
+# Lints (crates opt in with `[lints] workspace = true`)
+# ---------------------------------------------------------------------------
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+missing_unsafe_on_extern = "deny"
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_qualifications = "warn"
+unused_lifetimes = "warn"
+unused_import_braces = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+let_underscore_drop = "warn"
+unit_bindings = "warn"
+
+[workspace.lints.clippy]
+# Groups
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+
+# Too noisy for GPUI-style builder/view code
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+needless_pass_by_value = "allow"  # GPUI passes `Window`/`Context` handles by value in callbacks
+too_many_lines = "allow"
+
+# Robustness
+undocumented_unsafe_blocks = "deny"
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+indexing_slicing = "warn"
+exit = "warn"
+mem_forget = "warn"
+
+# Leftovers that must not ship
+dbg_macro = "warn"
+todo = "warn"
+unimplemented = "warn"
+print_stdout = "warn"
+print_stderr = "warn"
+
+# Clarity / performance
+clone_on_ref_ptr = "warn"
+rc_buffer = "warn"
+str_to_string = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+large_types_passed_by_value = "warn"
+rest_pat_in_fully_bound_structs = "warn"
+semicolon_if_nothing_returned = "warn"
+lossy_float_literal = "warn"
+verbose_file_reads = "warn"
+filetype_is_file = "warn"
+
+# ---------------------------------------------------------------------------
+# Profiles
+# ---------------------------------------------------------------------------
+
+[profile.dev]
+# Faster incremental builds; keep enough debug info for backtraces.
+debug = "line-tables-only"
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+# Optimise dependencies (GPUI, wgpu, font shaping) so the app is usable in dev.
+opt-level = 2
+debug = false
+
+[profile.dev.build-override]
+opt-level = 3
+
+[profile.test]
+inherits = "dev"
+
+[profile.release]
+opt-level = 3
+lto = "fat"
+codegen-units = 1
+strip = "symbols"
+debug = false
+incremental = false
+panic = "unwind"    # GPUI relies on unwinding to report panics from callbacks

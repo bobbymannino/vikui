@@ -1,0 +1,7 @@
+[alias]
+lint = "clippy --workspace --all-targets --locked -- -D warnings"
+fmt-check = "fmt --all --check"
+
+# Statically link the MSVC runtime so release binaries don't need the VC++ redistributable.
+[target.'cfg(all(windows, target_env = "msvc"))']
+rustflags = ["-C", "target-feature=+crt-static"]

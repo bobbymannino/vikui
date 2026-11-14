@@ -1,6 +1,12 @@
 [package]
 name = "vikui"
+description = "A cross-platform GPUI desktop client for Vikunja"
 version.workspace = true
 edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
 
 [dependencies]
+
+[lints]
+workspace = true
