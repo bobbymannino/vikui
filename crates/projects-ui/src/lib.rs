@@ -11,12 +11,12 @@ use gpui_kit::component::button::Button;
 use gpui_kit::component::table::{DataTable, TableState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, FocusHandle, Focusable, FontWeight,
+    App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, FontWeight,
     InteractiveElement as _, IntoElement, KeyBinding, KeyBindingContextPredicate,
     ParentElement as _, Render, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
     Task, Window, div, prelude::FluentBuilder as _,
 };
-use vikunja::{Client, Project, Token};
+use vikunja::Project;
 
 use projects_table::{ProjectRow, ProjectsTable};
 
@@ -27,9 +27,11 @@ const CONTEXT: &str = "Projects";
 /// Fetches the user's projects; blocking, so it runs on the background executor.
 pub type LoadProjects = Arc<dyn Fn() -> Result<Vec<Project>, vikunja::Error> + Send + Sync>;
 
-/// Load projects from `client` as the user identified by `token`.
-pub fn loader(client: Client, token: Token) -> LoadProjects {
-    Arc::new(move || client.projects(&token))
+/// Events for the app to act on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProjectsEvent {
+    /// The server rejected the session and it could not be renewed; sign in again.
+    SessionExpired,
 }
 
 /// Register the projects view's key bindings. Call once at startup.
@@ -114,6 +116,14 @@ impl ProjectsView {
                     cx.notify();
                 });
             }
+            Err(vikunja::Error::Unauthorized) => {
+                log::info!("session expired while loading projects");
+                self.table.update(cx, |table, cx| {
+                    table.delegate_mut().set_loading(false);
+                    cx.notify();
+                });
+                cx.emit(ProjectsEvent::SessionExpired);
+            }
             Err(err) => {
                 log::warn!("failed to load projects: {err:#}");
                 self.error = Some(err.to_string().into());
@@ -132,6 +142,8 @@ impl ProjectsView {
         }
     }
 }
+
+impl EventEmitter<ProjectsEvent> for ProjectsView {}
 
 impl Focusable for ProjectsView {
     fn focus_handle(&self, _: &App) -> FocusHandle {
@@ -307,16 +319,41 @@ mod tests {
 
     #[gpui_kit::test]
     async fn shows_load_errors(cx: &mut TestAppContext) {
-        let load: LoadProjects = Arc::new(|| Err(vikunja::Error::Unauthorized));
+        let load: LoadProjects = Arc::new(|| {
+            Err(vikunja::Error::Api {
+                status: 500,
+                code: None,
+                message: "Database unavailable".into(),
+            })
+        });
         let handle = open_projects(cx, load);
 
         cx.wait_for(handle, Duration::from_secs(5), |window, _| {
             window
-                .try_find_by_label(
-                    "Couldn't load projects: Your session has expired. Sign in again.",
-                )
+                .try_find_by_label("Couldn't load projects: Database unavailable")
                 .is_some()
         })
         .await;
+    }
+
+    #[gpui_kit::test]
+    fn rejected_session_emits_session_expired(cx: &mut TestAppContext) {
+        let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = Rc::clone(&events);
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let load: LoadProjects = Arc::new(|| Err(vikunja::Error::Unauthorized));
+            let (_, view) = gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| ProjectsView::new(load, window, cx))
+            })
+            .unwrap();
+            cx.subscribe(&view, move |_, event: &ProjectsEvent, _| {
+                seen.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), [ProjectsEvent::SessionExpired]);
     }
 }

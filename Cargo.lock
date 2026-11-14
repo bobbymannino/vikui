@@ -4306,6 +4306,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "keyring",
+ "log",
  "serde",
  "serde_json",
  "thiserror 2.0.21",
@@ -7974,6 +7975,7 @@ dependencies = [
 name = "vikunja"
 version = "0.1.0"
 dependencies = [
+ "log",
  "serde",
  "serde_json",
  "thiserror 2.0.21",

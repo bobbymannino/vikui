@@ -1,19 +1,30 @@
 //! Vikui's sign-in window.
 
+use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::form::{field, v_form};
 use gpui_kit::component::input::{Input, InputContentType, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, Sizable as _, v_flex};
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext as _, Context, Entity, FontWeight, IntoElement,
-    ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, WindowOptions,
-    div, prelude::FluentBuilder as _, px,
+    AnyWindowHandle, App, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _,
+    IntoElement, ParentElement as _, Render, Role, SharedString, StatefulInteractiveElement as _,
+    Styled as _, Subscription, Window, WindowOptions, div, prelude::FluentBuilder as _, px,
 };
 use login::{Credentials, SignIn};
 use vikunja::ServerUrl;
 
 type OnSignedIn = Box<dyn FnOnce(Credentials, &mut App)>;
+
+/// How the sign-in window should start: blank on first launch, or pre-filled with a
+/// message after the session expired.
+#[derive(Clone, Debug, Default)]
+pub struct Prompt {
+    /// Shown above the form until the user submits it.
+    pub notice: Option<SharedString>,
+    pub server: Option<SharedString>,
+    pub username: Option<SharedString>,
+}
 
 /// Sign-in form shown on launch when no credentials are stored.
 pub struct LoginWindow {
@@ -24,6 +35,7 @@ pub struct LoginWindow {
     /// Shown once the server reports the account uses two-factor authentication.
     needs_totp: bool,
     submitting: bool,
+    notice: Option<SharedString>,
     error: Option<SharedString>,
     /// Called once, after credentials are saved; the login window then closes itself.
     on_signed_in: Option<OnSignedIn>,
@@ -31,10 +43,31 @@ pub struct LoginWindow {
 }
 
 impl LoginWindow {
-    fn new(on_signed_in: OnSignedIn, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let server =
-            cx.new(|cx| InputState::new(window, cx).placeholder("https://tasks.example.com"));
-        let username = cx.new(|cx| InputState::new(window, cx));
+    fn new(
+        prompt: Prompt,
+        on_signed_in: OnSignedIn,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
+        let Prompt {
+            notice,
+            server: server_value,
+            username: username_value,
+        } = prompt;
+        let server = cx.new(|cx| {
+            let input = InputState::new(window, cx).placeholder("https://tasks.example.com");
+            match server_value {
+                Some(value) => input.default_value(value),
+                None => input,
+            }
+        });
+        let username = cx.new(|cx| {
+            let input = InputState::new(window, cx);
+            match username_value {
+                Some(value) => input.default_value(value),
+                None => input,
+            }
+        });
         let password = cx.new(|cx| InputState::new(window, cx).masked(true));
         let totp = cx.new(|cx| InputState::new(window, cx).placeholder("123456"));
 
@@ -50,7 +83,13 @@ impl LoginWindow {
             })
             .collect();
 
-        server.update(cx, |input, cx| input.focus(window, cx));
+        // Start where the user has something left to type.
+        let first_empty = [&server, &username]
+            .into_iter()
+            .find(|input| input.read(cx).value().trim().is_empty())
+            .unwrap_or(&password)
+            .clone();
+        first_empty.update(cx, |input, cx| input.focus(window, cx));
 
         Self {
             server,
@@ -59,6 +98,7 @@ impl LoginWindow {
             totp,
             needs_totp: false,
             submitting: false,
+            notice,
             error: None,
             on_signed_in: Some(on_signed_in),
             _subscriptions: subscriptions,
@@ -95,6 +135,7 @@ impl LoginWindow {
         }
 
         self.submitting = true;
+        self.notice = None;
         self.error = None;
         cx.notify();
 
@@ -187,6 +228,17 @@ impl Render for LoginWindow {
                                     .child("Connect Vikui to your Vikunja server."),
                             ),
                     )
+                    .when_some(self.notice.clone(), |this, message| {
+                        this.child(
+                            // `Alert` has no accessible name of its own; announce the message.
+                            div()
+                                .id("login-notice")
+                                .role(Role::Alert)
+                                .aria_label(message.clone())
+                                .child(Alert::warning("login-notice-alert", message))
+                                .test_support(),
+                        )
+                    })
                     .when_some(self.error.clone(), |this, message| {
                         this.child(Alert::error("login-error", message))
                     })
@@ -254,12 +306,45 @@ impl Render for LoginWindow {
 /// the window closes, so the caller can open whatever comes next.
 pub fn open(
     options: WindowOptions,
+    prompt: Prompt,
     cx: &mut App,
     on_signed_in: impl FnOnce(Credentials, &mut App) + 'static,
 ) -> gpui_kit::Result<AnyWindowHandle> {
     let on_signed_in: OnSignedIn = Box::new(on_signed_in);
     let (handle, _) = gpui_kit::open_window(options, cx, |window, cx| {
-        cx.new(|cx| LoginWindow::new(on_signed_in, window, cx))
+        cx.new(|cx| LoginWindow::new(prompt, on_signed_in, window, cx))
     })?;
     Ok(handle)
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::TestAppContext;
+    use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
+
+    use super::*;
+
+    #[gpui_kit::test]
+    fn expired_session_prompt_shows_notice_and_prefills(cx: &mut TestAppContext) {
+        let handle = cx.update(|cx| {
+            gpui_kit::init(cx);
+            let prompt = Prompt {
+                notice: Some("Your session has expired.".into()),
+                server: Some("https://tasks.example.com".into()),
+                username: Some("ana".into()),
+            };
+            open(WindowOptions::default(), prompt, cx, |_, _| {}).unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find_by_label("Your session has expired.");
+            assert_eq!(
+                window.find("server").value(),
+                Some("https://tasks.example.com")
+            );
+            assert_eq!(window.find("username").value(), Some("ana"));
+            assert_eq!(window.find("password").focused(), Some(true));
+        })
+        .unwrap();
+    }
 }
