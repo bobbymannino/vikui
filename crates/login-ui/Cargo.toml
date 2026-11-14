@@ -1,0 +1,16 @@
+[package]
+name = "login-ui"
+description = "Vikui's sign-in window"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+log.workspace = true
+login.workspace = true
+vikunja.workspace = true
+
+[lints]
+workspace = true
