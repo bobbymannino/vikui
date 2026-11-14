@@ -23,6 +23,10 @@ pub enum Error {
     #[error("This account has been disabled.")]
     AccountDisabled,
 
+    /// The token is missing, invalid or expired.
+    #[error("Your session has expired. Sign in again.")]
+    Unauthorized,
+
     #[error("{message}")]
     Api {
         status: u16,
@@ -50,6 +54,7 @@ impl Error {
             Some(code::INVALID_TOTP_PASSCODE) => Self::TotpRequired,
             Some(code::EMAIL_NOT_CONFIRMED) => Self::EmailNotConfirmed,
             Some(code::ACCOUNT_DISABLED) => Self::AccountDisabled,
+            _ if status == 401 => Self::Unauthorized,
             _ => Self::Api {
                 status,
                 code,
@@ -77,6 +82,15 @@ mod tests {
         assert!(matches!(
             Error::from_response(412, totp),
             Error::TotpRequired
+        ));
+    }
+
+    #[test]
+    fn maps_401_to_unauthorized() {
+        let expired = r#"{"code":11,"message":"missing, malformed, expired or otherwise invalid token provided"}"#;
+        assert!(matches!(
+            Error::from_response(401, expired),
+            Error::Unauthorized
         ));
     }
 
