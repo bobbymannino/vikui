@@ -16,6 +16,7 @@ login-ui = { path = "crates/login-ui" }
 overview-ui = { path = "crates/overview-ui" }
 projects-ui = { path = "crates/projects-ui" }
 reminders = { path = "crates/reminders" }
+reminders-ui = { path = "crates/reminders-ui" }
 vikunja = { path = "crates/vikunja" }
 
 # External crates
