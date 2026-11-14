@@ -3,12 +3,14 @@
 
 use gpui_kit::component::Theme;
 use gpui_kit::{App, AppContext as _, Bounds, WindowBounds, WindowOptions, px, size};
+use login::Credentials;
 
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
     gpui_kit::application().run(|cx| {
         gpui_kit::init(cx);
+        projects_ui::init(cx);
         Theme::sync_system_appearance(None, cx);
         quit_when_last_window_closes(cx);
 
@@ -22,18 +24,14 @@ fn main() {
 fn open_initial_window(cx: &mut App) {
     let load = cx.background_spawn(async { login::credentials::load() });
     cx.spawn(async move |cx| {
-        let signed_in = match load.await {
-            Ok(credentials) => credentials.is_some(),
-            Err(err) => {
-                log::warn!("treating user as signed out: {err:#}");
-                false
-            }
-        };
+        let credentials = load.await.unwrap_or_else(|err| {
+            log::warn!("treating user as signed out: {err:#}");
+            None
+        });
         cx.update(|cx| {
-            if signed_in {
-                open_overview(cx);
-            } else {
-                open_login(cx);
+            match credentials {
+                Some(credentials) => open_overview(credentials, cx),
+                None => open_login(cx),
             }
             cx.activate(true);
         });
@@ -43,14 +41,20 @@ fn open_initial_window(cx: &mut App) {
 
 fn open_login(cx: &mut App) {
     let options = window_options("Sign in – Vikui", 480., 560., cx);
-    if let Err(err) = login_ui::open(options, cx, |_, cx| open_overview(cx)) {
+    if let Err(err) = login_ui::open(options, cx, open_overview) {
         log::error!("failed to open login window: {err:#}");
     }
 }
 
-fn open_overview(cx: &mut App) {
+fn open_overview(credentials: Credentials, cx: &mut App) {
     let options = window_options("Vikui", 960., 640., cx);
-    if let Err(err) = overview_ui::open(options, cx) {
+    let load_projects =
+        projects_ui::loader(vikunja::Client::new(credentials.server), credentials.token);
+    let result = overview_ui::open(options, cx, move |window, cx| {
+        cx.new(|cx| projects_ui::ProjectsView::new(load_projects, window, cx))
+            .into()
+    });
+    if let Err(err) = result {
         log::error!("failed to open main window: {err:#}");
     }
 }

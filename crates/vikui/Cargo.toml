@@ -13,6 +13,8 @@ log.workspace = true
 login.workspace = true
 login-ui.workspace = true
 overview-ui.workspace = true
+projects-ui.workspace = true
+vikunja.workspace = true
 
 [lints]
 workspace = true
