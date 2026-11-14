@@ -1,6 +1,7 @@
 // Release builds on Windows are GUI apps: don't open a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod credentials;
 mod views;
 
 use gpui_kit::component::Theme;
