@@ -1,0 +1,6 @@
+[package]
+name = "vikui"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
