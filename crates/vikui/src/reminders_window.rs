@@ -29,7 +29,15 @@ pub fn open(
     let load = cx.background_spawn(async move {
         session
             .call(|client, token| source.tasks(client, token))
-            .map(|tasks| reminders::from_tasks(&tasks))
+            .map(|tasks| {
+                let reminders = reminders::from_tasks(&tasks);
+                log::debug!(
+                    "{source:?}: {} tasks, {} reminders",
+                    tasks.len(),
+                    reminders.len()
+                );
+                reminders
+            })
     });
     cx.spawn(async move |cx| {
         let result = load.await;

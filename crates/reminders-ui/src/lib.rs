@@ -163,7 +163,7 @@ mod tests {
 
     fn reminder(at: Timestamp, title: &str) -> Reminder {
         Reminder {
-            at,
+            at: Some(at),
             relative: Some(vikunja::RelativeReminder {
                 period_secs: -3600,
                 to: vikunja::RelativeTo::Due,

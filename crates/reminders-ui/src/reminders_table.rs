@@ -15,13 +15,14 @@ use reminders::Reminder;
 /// One row, formatted off the render path.
 #[derive(Clone, Debug)]
 pub struct ReminderRow {
-    at: Timestamp,
+    at: Option<Timestamp>,
     pub when: SharedString,
     pub task: SharedString,
     pub identifier: SharedString,
     pub schedule: SharedString,
     pub status: SharedString,
-    /// Fired already, or its task is done: drawn muted (and says so in `status`).
+    /// Fired already, not scheduled, or its task is done: drawn muted (and says so in
+    /// `status`).
     pub inactive: bool,
     /// Input order, used to undo sorting.
     order: usize,
@@ -35,21 +36,27 @@ impl ReminderRow {
             .enumerate()
             .map(|(order, reminder)| {
                 let past = reminder.is_past(now);
+                let unscheduled = reminder.unscheduled_reason();
                 let status = if reminder.task_done {
                     "Task done"
+                } else if unscheduled.is_some() {
+                    "Not scheduled"
                 } else if past {
                     "Past"
                 } else {
                     "Upcoming"
                 };
-                Self {
-                    at: reminder.at,
-                    when: reminder
-                        .at
+                let when = match (reminder.at, unscheduled) {
+                    (Some(at), _) => at
                         .to_zoned(zone.clone())
                         .strftime("%a %-d %b %Y, %H:%M")
                         .to_string()
                         .into(),
+                    (None, reason) => reason.unwrap_or_default().into(),
+                };
+                Self {
+                    at: reminder.at,
+                    when,
                     task: reminder.task_title.clone().into(),
                     identifier: reminder.task_identifier.clone().into(),
                     schedule: reminder
@@ -57,7 +64,7 @@ impl ReminderRow {
                         .unwrap_or_else(|| "Fixed time".to_owned())
                         .into(),
                     status: status.into(),
-                    inactive: past || reminder.task_done,
+                    inactive: past || unscheduled.is_some() || reminder.task_done,
                     order,
                 }
             })
@@ -137,7 +144,8 @@ impl RemindersTable {
 fn compare(col: Col, a: &ReminderRow, b: &ReminderRow) -> Ordering {
     // Chronological, not by the formatted text.
     let primary = if col == Col::When {
-        a.at.cmp(&b.at)
+        // Unscheduled reminders after scheduled ones.
+        (a.at.is_none(), a.at).cmp(&(b.at.is_none(), b.at))
     } else {
         let (a_text, b_text) = (col.text(a), col.text(b));
         a_text
@@ -235,7 +243,7 @@ mod tests {
 
     fn reminder(at: &str, title: &str, done: bool) -> Reminder {
         Reminder {
-            at: at.parse().unwrap(),
+            at: Some(at.parse().unwrap()),
             relative: None,
             task_id: 1,
             task_title: title.into(),
@@ -264,6 +272,37 @@ mod tests {
         assert!(!rows[1].inactive);
         assert_eq!(rows[1].schedule, "Fixed time");
         assert_eq!(rows[2].status, "Task done");
+    }
+
+    #[test]
+    fn unscheduled_reminders_say_why_and_sort_last() {
+        let now: Timestamp = "2026-01-01T00:00:00Z".parse().unwrap();
+        let unscheduled = Reminder {
+            at: None,
+            relative: Some(vikunja::RelativeReminder {
+                period_secs: -3600,
+                to: vikunja::RelativeTo::Due,
+            }),
+            ..reminder("2026-01-02T00:00:00Z", "No due date", false)
+        };
+        let mut table = RemindersTable::default();
+        table.set_rows(ReminderRow::from_reminders(
+            &[
+                unscheduled,
+                reminder("2026-12-01T09:00:00Z", "Scheduled", false),
+            ],
+            now,
+            &TimeZone::UTC,
+        ));
+        let row = &table.rows()[0];
+        assert_eq!(row.when, "Due date not set");
+        assert_eq!(row.status, "Not scheduled");
+        assert!(row.inactive);
+
+        table.sort = Some((Col::When, ColumnSort::Ascending));
+        table.apply_sort();
+        let titles: Vec<_> = table.rows().iter().map(|r| r.task.as_ref()).collect();
+        assert_eq!(titles, ["Scheduled", "No due date"]);
     }
 
     #[test]

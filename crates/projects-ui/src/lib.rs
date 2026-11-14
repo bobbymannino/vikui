@@ -33,7 +33,12 @@ pub enum ProjectsEvent {
     /// The server rejected the session and it could not be renewed; sign in again.
     SessionExpired,
     /// The user opened a project (double-click, or Enter on the selected row).
-    OpenProject { id: i64, title: SharedString },
+    OpenProject {
+        id: i64,
+        title: SharedString,
+        /// Every project below it, at any depth.
+        subproject_ids: Vec<i64>,
+    },
     /// The user opened a saved filter, the same way.
     OpenSavedFilter { filter_id: i64, title: SharedString },
 }
@@ -146,7 +151,8 @@ impl ProjectsView {
     }
 
     fn open_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
-        let Some(row) = self.table.read(cx).delegate().row(row_ix) else {
+        let table = self.table.read(cx).delegate();
+        let Some(row) = table.row(row_ix) else {
             return;
         };
         let title = row.title.clone();
@@ -154,9 +160,11 @@ impl ProjectsView {
             ProjectKind::SavedFilter { filter_id } => {
                 ProjectsEvent::OpenSavedFilter { filter_id, title }
             }
-            ProjectKind::Project | ProjectKind::Favorites => {
-                ProjectsEvent::OpenProject { id: row.id, title }
-            }
+            ProjectKind::Project | ProjectKind::Favorites => ProjectsEvent::OpenProject {
+                id: row.id,
+                title,
+                subproject_ids: table.subproject_ids(row.id),
+            },
         };
         cx.emit(event);
     }
@@ -449,7 +457,8 @@ mod tests {
             *events.borrow(),
             [ProjectsEvent::OpenProject {
                 id: 2,
-                title: "Home".into()
+                title: "Home".into(),
+                subproject_ids: Vec::new(),
             }]
         );
     }

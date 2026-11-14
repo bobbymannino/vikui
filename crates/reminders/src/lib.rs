@@ -9,7 +9,9 @@ use vikunja::{Client, Error, RelativeReminder, RelativeTo, Task, TaskQuery, Toke
 /// One reminder, flattened out of its task.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reminder {
-    pub at: Timestamp,
+    /// `None` for a relative reminder whose date (e.g. the due date) is unset; it will
+    /// not fire until that date is set.
+    pub at: Option<Timestamp>,
     pub relative: Option<RelativeReminder>,
     pub task_id: i64,
     pub task_title: String,
@@ -28,41 +30,53 @@ impl Reminder {
 
     #[must_use]
     pub fn is_past(&self, now: Timestamp) -> bool {
-        self.at < now
+        self.at.is_some_and(|at| at < now)
+    }
+
+    /// "Due date not set" for a relative reminder that has no time yet.
+    #[must_use]
+    pub fn unscheduled_reason(&self) -> Option<&'static str> {
+        if self.at.is_some() {
+            return None;
+        }
+        Some(match self.relative.map(|relative| relative.to) {
+            Some(RelativeTo::Due) => "Due date not set",
+            Some(RelativeTo::Start) => "Start date not set",
+            Some(RelativeTo::End) => "End date not set",
+            None => "No time set",
+        })
     }
 }
 
-/// Every reminder on `tasks` that has a time, earliest first.
-///
-/// Relative reminders whose date is unset (so they never fire) are skipped.
+/// Every reminder on `tasks`, earliest first; reminders without a time come last.
 #[must_use]
 pub fn from_tasks(tasks: &[Task]) -> Vec<Reminder> {
     let mut reminders: Vec<Reminder> = tasks
         .iter()
         .flat_map(|task| {
-            task.reminders.iter().filter_map(move |reminder| {
-                Some(Reminder {
-                    at: reminder.at?,
-                    relative: reminder.relative,
-                    task_id: task.id,
-                    task_title: task.title.clone(),
-                    task_identifier: task.identifier.clone(),
-                    project_id: task.project_id,
-                    task_done: task.done,
-                })
+            task.reminders.iter().map(move |reminder| Reminder {
+                at: reminder.at,
+                relative: reminder.relative,
+                task_id: task.id,
+                task_title: task.title.clone(),
+                task_identifier: task.identifier.clone(),
+                project_id: task.project_id,
+                task_done: task.done,
             })
         })
         .collect();
-    reminders.sort_by_key(|reminder| (reminder.at, reminder.task_id));
+    reminders.sort_by_key(|reminder| (reminder.at.is_none(), reminder.at, reminder.task_id));
     reminders
 }
 
 /// Where a list of reminders came from; gives the window its title and the tasks query.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
+    /// A project; `subproject_ids` (all levels below it) are included too.
     Project {
         id: i64,
         title: String,
+        subproject_ids: Vec<i64>,
     },
     /// A saved filter; its stored query is fetched from the server.
     SavedFilter {
@@ -102,7 +116,14 @@ impl Source {
     /// The query, when it is known without asking the server.
     fn direct_query(&self) -> Option<TaskQuery> {
         match self {
-            Self::Project { id, .. } => Some(TaskQuery::project(*id)),
+            Self::Project {
+                id, subproject_ids, ..
+            } => {
+                let ids: Vec<i64> = std::iter::once(*id)
+                    .chain(subproject_ids.iter().copied())
+                    .collect();
+                Some(TaskQuery::projects(&ids))
+            }
             Self::SavedFilter { .. } => None,
             Self::Filter(filter) => Some(TaskQuery::filter(filter.clone())),
             Self::Search(text) => Some(TaskQuery::search(text.clone())),
@@ -177,7 +198,7 @@ mod tests {
     }
 
     #[test]
-    fn flattens_sorts_and_skips_unscheduled() {
+    fn flattens_and_sorts_unscheduled_last() {
         let tasks = [
             task(
                 1,
@@ -218,11 +239,15 @@ mod tests {
         assert_eq!(
             order,
             [
-                ("Two reminders", ts("2026-12-01T09:00:00Z")),
-                ("Later", ts("2026-12-02T09:00:00Z")),
-                ("Two reminders", ts("2026-12-03T09:00:00Z")),
+                ("Two reminders", Some(ts("2026-12-01T09:00:00Z"))),
+                ("Later", Some(ts("2026-12-02T09:00:00Z"))),
+                ("Two reminders", Some(ts("2026-12-03T09:00:00Z"))),
+                ("Two reminders", None),
             ]
         );
+        let unscheduled = reminders.last().unwrap();
+        assert_eq!(unscheduled.unscheduled_reason(), Some("Due date not set"));
+        assert!(!unscheduled.is_past(ts("2030-01-01T00:00:00Z")));
     }
 
     #[test]
@@ -246,9 +271,13 @@ mod tests {
         let project = Source::Project {
             id: 4,
             title: "Home".into(),
+            subproject_ids: vec![9, 12],
         };
         assert_eq!(project.title(), "Reminders – Home");
-        assert_eq!(project.direct_query(), Some(TaskQuery::project(4)));
+        assert_eq!(
+            project.direct_query(),
+            Some(TaskQuery::projects(&[4, 9, 12]))
+        );
         assert_eq!(
             Source::Search("rent".into())
                 .direct_query()

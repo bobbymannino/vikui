@@ -19,6 +19,7 @@ pub struct ProjectRow {
     pub kind: ProjectKind,
     pub title: SharedString,
     pub kind_label: SharedString,
+    pub parent_id: Option<i64>,
     pub parent: SharedString,
     pub identifier: SharedString,
     pub description: SharedString,
@@ -47,6 +48,7 @@ impl ProjectRow {
                     ProjectKind::Project | ProjectKind::Favorites => "Project",
                 }
                 .into(),
+                parent_id: project.parent_id(),
                 parent: project
                     .parent_id()
                     .and_then(|id| titles.get(&id))
@@ -116,6 +118,27 @@ impl ProjectsTable {
 
     pub fn row(&self, row_ix: usize) -> Option<&ProjectRow> {
         self.rows.get(row_ix)
+    }
+
+    /// Every project below `project_id`, at any depth, in breadth-first order.
+    pub fn subproject_ids(&self, project_id: i64) -> Vec<i64> {
+        let mut found: Vec<i64> = Vec::new();
+        let mut next = 0;
+        let mut parent = Some(project_id);
+        while let Some(current) = parent {
+            for row in &self.rows {
+                // The `contains` check stops a malformed parent cycle from looping forever.
+                if row.parent_id == Some(current)
+                    && row.id != project_id
+                    && !found.contains(&row.id)
+                {
+                    found.push(row.id);
+                }
+            }
+            parent = found.get(next).copied();
+            next += 1;
+        }
+        found
     }
 
     fn row_text(&self, row_ix: usize, col_ix: usize) -> Option<&SharedString> {
@@ -274,6 +297,21 @@ mod tests {
         assert_eq!(rows[0].parent, "");
         assert_eq!(rows[1].parent, "Work");
         assert_eq!(rows[2].parent, "");
+    }
+
+    #[test]
+    fn finds_subprojects_at_every_depth() {
+        let mut table = ProjectsTable::default();
+        table.set_rows(ProjectRow::from_projects(&[
+            project(1, "Work", 0),
+            project(2, "Reports", 1),
+            project(3, "Q4", 2),
+            project(4, "Home", 0),
+            project(5, "Hiring", 1),
+        ]));
+        assert_eq!(table.subproject_ids(1), [2, 5, 3]);
+        assert_eq!(table.subproject_ids(2), [3]);
+        assert_eq!(table.subproject_ids(4), Vec::<i64>::new());
     }
 
     #[test]

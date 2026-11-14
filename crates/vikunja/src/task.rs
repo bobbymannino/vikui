@@ -4,7 +4,7 @@ use serde::{Deserialize, Deserializer};
 /// Which tasks to fetch from `GET /tasks`. Both fields are optional and combine.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct TaskQuery {
-    /// Vikunja filter syntax, e.g. `project = 3 && done = false`.
+    /// Vikunja filter syntax, e.g. `project in 3,4 && done = false`.
     pub filter: Option<String>,
     /// Free-text search over titles and descriptions.
     pub search: Option<String>,
@@ -13,11 +13,12 @@ pub struct TaskQuery {
 }
 
 impl TaskQuery {
-    /// Open (not done) tasks in one project.
+    /// All tasks, done or not, in the given projects (e.g. a project and its subprojects).
     #[must_use]
-    pub fn project(project_id: i64) -> Self {
+    pub fn projects(project_ids: &[i64]) -> Self {
+        let ids: Vec<String> = project_ids.iter().map(ToString::to_string).collect();
         Self {
-            filter: Some(format!("project = {project_id} && done = false")),
+            filter: Some(format!("project in {}", ids.join(","))),
             ..Self::default()
         }
     }
@@ -233,10 +234,14 @@ mod tests {
     }
 
     #[test]
-    fn project_query_filters_open_tasks() {
+    fn projects_query_lists_every_project() {
         assert_eq!(
-            TaskQuery::project(5).filter.as_deref(),
-            Some("project = 5 && done = false")
+            TaskQuery::projects(&[5]).filter.as_deref(),
+            Some("project in 5")
+        );
+        assert_eq!(
+            TaskQuery::projects(&[5, 8, 13]).filter.as_deref(),
+            Some("project in 5,8,13")
         );
     }
 }

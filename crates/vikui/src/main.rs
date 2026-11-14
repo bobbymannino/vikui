@@ -81,9 +81,14 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
         cx.subscribe(&view, move |_, event, cx| {
             let source = match event {
                 ProjectsEvent::SessionExpired => return expire(&session, cx),
-                ProjectsEvent::OpenProject { id, title } => Source::Project {
+                ProjectsEvent::OpenProject {
+                    id,
+                    title,
+                    subproject_ids,
+                } => Source::Project {
                     id: *id,
                     title: title.to_string(),
+                    subproject_ids: subproject_ids.clone(),
                 },
                 ProjectsEvent::OpenSavedFilter { filter_id, title } => Source::SavedFilter {
                     filter_id: *filter_id,
