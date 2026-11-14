@@ -2,7 +2,6 @@
 //! (macOS Keychain, Windows Credential Manager, Secret Service on Linux).
 //!
 //! All functions block on the platform store; call them from a background task.
-#![expect(dead_code, reason = "wired up by the login window")]
 
 use std::fmt;
 
@@ -58,6 +57,7 @@ pub(crate) fn save(credentials: &Credentials) -> anyhow::Result<()> {
 }
 
 /// Remove saved credentials. Succeeds if none were stored.
+#[expect(dead_code, reason = "used by sign-out, which is not built yet")]
 pub(crate) fn clear() -> anyhow::Result<()> {
     match entry()?.delete_credential() {
         Ok(()) | Err(keyring::Error::NoEntry) => Ok(()),
