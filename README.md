@@ -6,6 +6,15 @@
 **Vikui** is a [GPUI](https://gpui.rs) application for interacting with a
 [Vikunja](https://vikunja.io) instance.
 
+## Install
+
+Download the archive for your platform from
+[Releases](../../releases) (x64 and arm64 builds for macOS, Linux and Windows).
+
+On macOS, unzip it and move `Vikui.app` to Applications. The app isn't notarized,
+so macOS blocks it the first time it opens: right-click it and choose **Open**, or run
+`xattr -dr com.apple.quarantine /Applications/Vikui.app`.
+
 ## Keyboard shortcuts
 
 `Mod` is Cmd on macOS and Ctrl on Linux and Windows.
