@@ -9,7 +9,10 @@ Vikui: a cross-platform GPUI desktop client for Vikunja (see `README.md`).
 - `crates/vikunja`: blocking Vikunja REST client, no UI.
 - `crates/login`: sign-in and keychain session storage, no UI.
 - `crates/login-ui`: sign-in window; reports success via callback, never opens other windows itself.
-- `crates/overview-ui`: main window.
+- `crates/overview-ui`: main window shell; hosts a content view passed in by the app.
+- `crates/projects-ui`: project list; reports opening a project and session expiry via events.
+- `crates/reminders`: turns tasks into a sorted reminder list, no UI.
+- `crates/reminders-ui`: reminders window; lists the reminders it is given, never fetches.
 - UI crates must not depend on each other; wire them together in `crates/vikui`.
 - Shared `version`/`edition` live in root `Cargo.toml` `[workspace.package]`; new crates inherit them.
 - Put shared dependency versions in root `[workspace.dependencies]` once a second crate needs them.

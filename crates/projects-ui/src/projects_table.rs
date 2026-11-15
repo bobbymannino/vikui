@@ -9,12 +9,17 @@ use gpui_kit::{
     App, Context, IntoElement, ParentElement as _, SharedString, Styled as _, Window, div,
     prelude::FluentBuilder as _,
 };
-use vikunja::Project;
+use vikunja::{Project, ProjectKind};
 
 /// One table row, prepared off the main thread so rendering only clones `SharedString`s.
 #[derive(Clone, Debug)]
 pub struct ProjectRow {
+    pub id: i64,
+    /// A real project or a saved filter; Favorites is never listed.
+    pub kind: ProjectKind,
     pub title: SharedString,
+    pub kind_label: SharedString,
+    pub parent_id: Option<i64>,
     pub parent: SharedString,
     pub identifier: SharedString,
     pub description: SharedString,
@@ -23,7 +28,8 @@ pub struct ProjectRow {
 }
 
 impl ProjectRow {
-    /// Build rows from an API response, dropping pseudo projects and resolving parent names.
+    /// Build rows from an API response: projects and saved filters, with parent names
+    /// resolved. The built-in Favorites list is left out.
     pub fn from_projects(projects: &[Project]) -> Vec<Self> {
         let titles: HashMap<i64, &str> = projects
             .iter()
@@ -31,10 +37,18 @@ impl ProjectRow {
             .collect();
         projects
             .iter()
-            .filter(|project| !project.is_pseudo())
+            .filter(|project| project.kind() != ProjectKind::Favorites)
             .enumerate()
             .map(|(order, project)| Self {
+                id: project.id,
+                kind: project.kind(),
                 title: project.title.clone().into(),
+                kind_label: match project.kind() {
+                    ProjectKind::SavedFilter { .. } => "Saved filter",
+                    ProjectKind::Project | ProjectKind::Favorites => "Project",
+                }
+                .into(),
+                parent_id: project.parent_id(),
                 parent: project
                     .parent_id()
                     .and_then(|id| titles.get(&id))
@@ -50,12 +64,19 @@ impl ProjectRow {
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Col {
     Title,
+    Kind,
     Parent,
     Identifier,
     Description,
 }
 
-const COLUMNS: [Col; 4] = [Col::Title, Col::Parent, Col::Identifier, Col::Description];
+const COLUMNS: [Col; 5] = [
+    Col::Title,
+    Col::Kind,
+    Col::Parent,
+    Col::Identifier,
+    Col::Description,
+];
 
 impl Col {
     fn at(ix: usize) -> Option<Self> {
@@ -65,6 +86,7 @@ impl Col {
     fn text(self, row: &ProjectRow) -> &SharedString {
         match self {
             Self::Title => &row.title,
+            Self::Kind => &row.kind_label,
             Self::Parent => &row.parent,
             Self::Identifier => &row.identifier,
             Self::Description => &row.description,
@@ -92,6 +114,31 @@ impl ProjectsTable {
 
     pub fn rows(&self) -> &[ProjectRow] {
         &self.rows
+    }
+
+    pub fn row(&self, row_ix: usize) -> Option<&ProjectRow> {
+        self.rows.get(row_ix)
+    }
+
+    /// Every project below `project_id`, at any depth, in breadth-first order.
+    pub fn subproject_ids(&self, project_id: i64) -> Vec<i64> {
+        let mut found: Vec<i64> = Vec::new();
+        let mut next = 0;
+        let mut parent = Some(project_id);
+        while let Some(current) = parent {
+            for row in &self.rows {
+                // The `contains` check stops a malformed parent cycle from looping forever.
+                if row.parent_id == Some(current)
+                    && row.id != project_id
+                    && !found.contains(&row.id)
+                {
+                    found.push(row.id);
+                }
+            }
+            parent = found.get(next).copied();
+            next += 1;
+        }
+        found
     }
 
     fn row_text(&self, row_ix: usize, col_ix: usize) -> Option<&SharedString> {
@@ -129,6 +176,7 @@ impl TableDelegate for ProjectsTable {
     fn column(&self, col_ix: usize, _: &App) -> Column {
         let column = match Col::at(col_ix) {
             Some(Col::Title) => Column::new("title", "Title").width(260.),
+            Some(Col::Kind) => Column::new("kind", "Type").width(120.),
             Some(Col::Parent) => Column::new("parent", "Parent").width(180.),
             Some(Col::Identifier) => Column::new("identifier", "Identifier").width(110.),
             Some(Col::Description) => Column::new("description", "Description").width(420.),
@@ -213,7 +261,31 @@ mod tests {
     }
 
     #[test]
-    fn rows_skip_pseudo_projects_and_name_parents() {
+    fn rows_include_saved_filters_but_not_favorites() {
+        let rows = ProjectRow::from_projects(&[
+            project(-1, "Favorites", 0),
+            project(1, "Work", 0),
+            project(-3, "Due this week", 0),
+        ]);
+        let listed: Vec<_> = rows
+            .iter()
+            .map(|r| (r.title.as_ref(), r.kind_label.as_ref(), r.kind))
+            .collect();
+        assert_eq!(
+            listed,
+            [
+                ("Work", "Project", ProjectKind::Project),
+                (
+                    "Due this week",
+                    "Saved filter",
+                    ProjectKind::SavedFilter { filter_id: 2 }
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn rows_skip_favorites_and_name_parents() {
         let rows = ProjectRow::from_projects(&[
             project(-1, "Favorites", 0),
             project(1, "Work", 0),
@@ -225,6 +297,21 @@ mod tests {
         assert_eq!(rows[0].parent, "");
         assert_eq!(rows[1].parent, "Work");
         assert_eq!(rows[2].parent, "");
+    }
+
+    #[test]
+    fn finds_subprojects_at_every_depth() {
+        let mut table = ProjectsTable::default();
+        table.set_rows(ProjectRow::from_projects(&[
+            project(1, "Work", 0),
+            project(2, "Reports", 1),
+            project(3, "Q4", 2),
+            project(4, "Home", 0),
+            project(5, "Hiring", 1),
+        ]));
+        assert_eq!(table.subproject_ids(1), [2, 5, 3]);
+        assert_eq!(table.subproject_ids(2), [3]);
+        assert_eq!(table.subproject_ids(4), Vec::<i64>::new());
     }
 
     #[test]
