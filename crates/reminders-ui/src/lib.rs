@@ -52,6 +52,7 @@ pub struct RemindersView {
     error: Option<SharedString>,
     /// What the rows were made from; rows refer to it by `order`.
     reminders: Vec<Reminder>,
+    matched_tasks: Option<usize>,
     details_panel: Option<AnyView>,
     /// `order` of the reminder the details panel is open on.
     details_for: Option<usize>,
@@ -94,6 +95,7 @@ impl RemindersView {
             summary: SharedString::default(),
             error: None,
             reminders: Vec::new(),
+            matched_tasks: None,
             details_panel: None,
             details_for: None,
             _table_events: table_events,
@@ -118,17 +120,40 @@ impl RemindersView {
         matched_tasks: Option<usize>,
         cx: &mut Context<Self>,
     ) {
-        let rows = ReminderRow::from_reminders(reminders, Timestamp::now(), &TimeZone::system());
+        self.error = None;
+        self.reminders = reminders.to_vec();
+        self.matched_tasks = matched_tasks;
+        self.details_for = None;
+        self.refresh_rows(cx);
+    }
+
+    /// Mark every reminder of `task_id` done or not done, keeping the list's order,
+    /// selection and details panel.
+    pub fn set_task_done(&mut self, task_id: i64, done: bool, cx: &mut Context<Self>) {
+        let mut changed = false;
+        for reminder in self
+            .reminders
+            .iter_mut()
+            .filter(|reminder| reminder.task_id == task_id && reminder.task_done != done)
+        {
+            reminder.task_done = done;
+            changed = true;
+        }
+        if changed {
+            self.refresh_rows(cx);
+        }
+    }
+
+    fn refresh_rows(&mut self, cx: &mut Context<Self>) {
+        let rows =
+            ReminderRow::from_reminders(&self.reminders, Timestamp::now(), &TimeZone::system());
         let set = rows.iter().filter(|row| row.is_set).count();
         let upcoming = rows
             .iter()
             .filter(|row| row.is_set && !row.inactive)
             .count();
-        self.summary = summary(set, upcoming, matched_tasks);
-        let empty_message = empty_message(matched_tasks);
-        self.error = None;
-        self.reminders = reminders.to_vec();
-        self.details_for = None;
+        self.summary = summary(set, upcoming, self.matched_tasks);
+        let empty_message = empty_message(self.matched_tasks);
         self.table.update(cx, |table, cx| {
             table.delegate_mut().set_empty_message(empty_message);
             table.delegate_mut().set_rows(rows);
@@ -484,6 +509,39 @@ mod tests {
         );
         key(cx, "escape");
         assert!(!panel_visible(cx));
+    }
+
+    #[gpui_kit::test]
+    fn marking_a_task_done_keeps_the_panel_open(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let reminders = vec![reminder(soon, "Pay rent")];
+            open(options(), "Reminders – Home", Some(reminders), cx).unwrap()
+        });
+        cx.update(|cx| {
+            let panel = cx.new(|_| TestPanel);
+            view.update(cx, |view, cx| {
+                view.set_details_panel(panel.into(), cx);
+                view.toggle_row(0, cx);
+                view.set_task_done(1, true, cx);
+            });
+        });
+        let status = |cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                let table = view.read(cx).table.read(cx);
+                table.delegate().row(0).map(|row| row.status.clone())
+            })
+        };
+        assert_eq!(status(cx).as_deref(), Some("Task done"));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find_by_label("Test panel");
+        })
+        .unwrap();
+        cx.update(|cx| view.update(cx, |view, cx| view.set_task_done(1, false, cx)));
+        assert_eq!(status(cx).as_deref(), Some("Upcoming"));
     }
 
     #[test]
