@@ -3,17 +3,91 @@ name: Release
 on:
   push:
     tags: ["v*"]
+  # Builds every target without releasing; useful to check packaging.
   workflow_dispatch:
 
 permissions:
-  contents: write
+  contents: read
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
 
 jobs:
+  build:
+    name: ${{ matrix.target }}
+    strategy:
+      fail-fast: true
+      matrix:
+        include:
+          - { os: macos-latest, target: aarch64-apple-darwin }
+          # Cross-compiled on Apple silicon; GitHub is retiring Intel macOS runners.
+          - { os: macos-latest, target: x86_64-apple-darwin }
+          - { os: ubuntu-24.04, target: x86_64-unknown-linux-gnu }
+          - { os: ubuntu-24.04-arm, target: aarch64-unknown-linux-gnu }
+          - { os: windows-latest, target: x86_64-pc-windows-msvc }
+          - { os: windows-11-arm, target: aarch64-pc-windows-msvc }
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install Linux system dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev \
+            libx11-xcb-dev libxcb1-dev libfontconfig-dev libfreetype-dev \
+            libvulkan1 libssl-dev pkg-config
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: "1.100.0"
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - run: cargo build --release --locked --target ${{ matrix.target }}
+      - name: Package
+        shell: bash
+        run: packaging/package.sh "${{ matrix.target }}" "${{ github.ref_name }}"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: vikui-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+          retention-days: 7
+
+  # Runs only once every build has succeeded, so a release never lacks a platform.
   release:
+    needs: build
     if: startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      TAG: ${{ github.ref_name }}
+      # Tags like v1.0.0-rc.1 are prereleases and never become the latest release.
+      PRERELEASE: ${{ contains(github.ref_name, '-') }}
     steps:
       - uses: actions/checkout@v7
         with:
           fetch-depth: 0 # so the previous tag can be detected
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: vikui-*
+          path: dist
+          merge-multiple: true
+      # Drafts stay hidden from /releases until the assets are attached.
       - uses: bobbymannino/github-release-action@v1
+        with:
+          draft: true
+          prerelease: ${{ env.PRERELEASE }}
+          make-latest: ${{ env.PRERELEASE == 'true' && 'false' || 'true' }}
+      - run: gh release upload "$TAG" dist/* --clobber
+      - name: Publish
+        run: |
+          if [[ "$PRERELEASE" == "true" ]]; then
+            gh release edit "$TAG" --draft=false --latest=false
+          else
+            gh release edit "$TAG" --draft=false --latest
+          fi
