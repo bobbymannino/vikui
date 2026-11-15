@@ -8,12 +8,71 @@
 
 ## Install
 
-Download the archive for your platform from
-[Releases](../../releases) (x64 and arm64 builds for macOS, Linux and Windows).
+Download the archive for your platform and CPU from [Releases](../../releases).
+Pick `arm64` for Apple silicon and ARM PCs, `x64` for everything else.
 
-On macOS, unzip it and move `Vikui.app` to Applications. The app isn't notarized,
-so macOS blocks it the first time it opens: right-click it and choose **Open**, or run
-`xattr -dr com.apple.quarantine /Applications/Vikui.app`.
+| Platform | Archive                                |
+| -------- | -------------------------------------- |
+| macOS    | `vikui-<version>-macos-<arch>.zip`     |
+| Linux    | `vikui-<version>-linux-<arch>.tar.gz`  |
+| Windows  | `vikui-<version>-windows-<arch>.zip`   |
+
+Vikui keeps your sign-in in the system credential store: Keychain on macOS,
+Credential Manager on Windows and the Secret Service on Linux.
+
+### macOS
+
+macOS 11 (Big Sur) or later.
+
+1. Unzip the archive and move `Vikui.app` to **Applications**.
+2. The app isn't notarized, so macOS blocks it the first time. Right-click it and
+   choose **Open**, then **Open** again. Or clear the quarantine flag:
+
+   ```sh
+   xattr -dr com.apple.quarantine /Applications/Vikui.app
+   ```
+
+### Linux
+
+Vikui needs a Vulkan driver, `libxkbcommon` and a Secret Service keyring
+(GNOME Keyring or KWallet), which most desktops already have. On Debian or Ubuntu:
+
+```sh
+sudo apt install libvulkan1 mesa-vulkan-drivers libxkbcommon0 libxkbcommon-x11-0 \
+  libwayland-client0 libx11-xcb1 libfontconfig1 gnome-keyring
+```
+
+On Fedora: `sudo dnf install vulkan-loader mesa-vulkan-drivers libxkbcommon-x11 gnome-keyring`.
+
+Then extract the archive and put the binary on your `PATH`:
+
+```sh
+tar -xzf vikui-<version>-linux-<arch>.tar.gz
+install -Dm755 vikui-<version>-linux-<arch>/vikui ~/.local/bin/vikui
+vikui
+```
+
+### Windows
+
+Windows 10 or later.
+
+1. Extract the zip (right-click → **Extract All…**) to a folder of your choice,
+   e.g. `%LOCALAPPDATA%\Programs\Vikui`.
+2. Run `vikui.exe`. It isn't code-signed, so SmartScreen may warn the first time:
+   choose **More info** → **Run anyway**.
+3. Optionally right-click `vikui.exe` → **Pin to Start**.
+
+### From source
+
+Install [Rust](https://rustup.rs) 1.100 or later, then:
+
+```sh
+cargo install --locked --git https://github.com/bobbymannino/vikui vikui
+```
+
+On Linux, also install the `-dev` packages for the libraries above
+(`libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
+libfontconfig-dev libfreetype-dev pkg-config`).
 
 ## Keyboard shortcuts
 
