@@ -8023,6 +8023,8 @@ dependencies = [
  "login-ui",
  "overview-ui",
  "projects-ui",
+ "reminder-details",
+ "reminder-details-ui",
  "reminders",
  "reminders-ui",
  "vikunja",
