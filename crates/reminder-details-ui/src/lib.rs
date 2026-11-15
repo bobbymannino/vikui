@@ -1,11 +1,15 @@
 //! A side panel showing one reminder and its task.
 //!
-//! The view is given [`ReminderDetails`] to show and reports [`ReminderDetailsEvent::Close`]
-//! when the user dismisses it; the host decides where it lives and when it goes away.
+//! The view is given [`ReminderDetails`] to show and reports what the user asks for through
+//! [`ReminderDetailsEvent`]: closing the panel or marking the task done. The host decides
+//! where the panel lives and does the saving.
 
 use gpui_kit::base::TestSupportExt as _;
+use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
-use gpui_kit::component::{ActiveTheme as _, IconName, Sizable as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, IconName, Sizable as _, h_flex, v_flex,
+};
 use gpui_kit::{
     App, Context, ElementId, EventEmitter, FontWeight, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
@@ -20,6 +24,10 @@ use reminder_details::ReminderDetails;
 pub enum ReminderDetailsEvent {
     /// The user asked to close the panel.
     Close,
+    /// The user asked to mark the task done (or not done). Save it, then call
+    /// [`ReminderDetailsView::set_details`] with the result or
+    /// [`ReminderDetailsView::set_error`].
+    SetDone { task_id: i64, done: bool },
 }
 
 /// One labelled value, e.g. "Due" / "Tue 1 Dec 2026, 09:00".
@@ -95,10 +103,21 @@ impl Content {
     }
 }
 
+/// The task shown, and whether it is done.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct ShownTask {
+    id: i64,
+    done: bool,
+}
+
 /// The details panel; empty until [`Self::set_details`] is called.
 #[derive(Default)]
 pub struct ReminderDetailsView {
     content: Option<Content>,
+    task: Option<ShownTask>,
+    /// A done/not-done change is being saved.
+    saving: bool,
+    error: Option<SharedString>,
 }
 
 impl ReminderDetailsView {
@@ -106,13 +125,49 @@ impl ReminderDetailsView {
         Self::default()
     }
 
-    /// Show `details`, replacing whatever was shown.
+    /// Show `details`, replacing whatever was shown, and end any pending save.
     pub fn set_details(&mut self, details: &ReminderDetails, cx: &mut Context<Self>) {
         let content = Content::new(details, Timestamp::now(), &TimeZone::system());
-        if self.content.as_ref() != Some(&content) {
+        let task = Some(ShownTask {
+            id: details.reminder.task_id,
+            done: details.reminder.task_done,
+        });
+        if self.content.as_ref() != Some(&content)
+            || self.task != task
+            || self.saving
+            || self.error.is_some()
+        {
             self.content = Some(content);
+            self.task = task;
+            self.saving = false;
+            self.error = None;
             cx.notify();
         }
+    }
+
+    /// The id of the task shown, if any.
+    pub fn task_id(&self) -> Option<i64> {
+        self.task.map(|task| task.id)
+    }
+
+    /// Show why saving failed; the task is shown as it was.
+    pub fn set_error(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.saving = false;
+        self.error = Some(message.into());
+        cx.notify();
+    }
+
+    fn toggle_done(&mut self, cx: &mut Context<Self>) {
+        let Some(task) = self.task.filter(|_| !self.saving) else {
+            return;
+        };
+        self.saving = true;
+        self.error = None;
+        cx.notify();
+        cx.emit(ReminderDetailsEvent::SetDone {
+            task_id: task.id,
+            done: !task.done,
+        });
     }
 }
 
@@ -207,6 +262,35 @@ impl Render for ReminderDetailsView {
                     .on_click(cx.listener(|_, _, _, cx| cx.emit(ReminderDetailsEvent::Close))),
             );
 
+        let done_button = self.task.map(|task| {
+            let label = if task.done {
+                "Mark as not done"
+            } else {
+                "Mark as complete"
+            };
+            Button::new("toggle-task-done")
+                .when(!task.done, |button| button.icon(IconName::Check))
+                .label(if self.saving { "Saving…" } else { label })
+                .accessibility_label(label)
+                .outline()
+                .small()
+                .loading(self.saving)
+                .disabled(self.saving)
+                .on_click(cx.listener(|this, _, _, cx| this.toggle_done(cx)))
+        });
+        let error = self.error.clone().map(|message| {
+            // `Alert` has no accessible name of its own; announce the message.
+            div()
+                .id("task-done-error")
+                .role(Role::Alert)
+                .aria_label(format!("Couldn't update the task: {message}"))
+                .child(
+                    Alert::error("task-done-error-alert", message)
+                        .title("Couldn't update the task"),
+                )
+                .test_support()
+        });
+
         let body = self.content.as_ref().map(|content| {
             v_flex()
                 .gap_5()
@@ -262,6 +346,8 @@ impl Render for ReminderDetailsView {
             .bg(theme.background)
             .text_color(theme.foreground)
             .child(header)
+            .children(done_button)
+            .children(error)
             .child(
                 div()
                     .id("reminder-details-body")
@@ -388,5 +474,71 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         assert!(closed.get());
+    }
+
+    #[gpui_kit::test]
+    fn marks_the_task_complete(cx: &mut TestAppContext) {
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| {
+                    let mut view = ReminderDetailsView::new();
+                    view.set_details(&details(&task()), cx);
+                    view
+                })
+            })
+            .unwrap()
+        });
+        let requests = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let requests = std::rc::Rc::clone(&requests);
+            cx.subscribe(&view, move |_, event, _| requests.borrow_mut().push(*event))
+                .detach();
+        });
+        let click = |cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.click("toggle-task-done", cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        let has_label = |cx: &mut TestAppContext, label: &str| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.try_find_by_label(label).is_some()
+            })
+            .unwrap()
+        };
+
+        assert!(has_label(cx, "Mark as complete"));
+        click(cx);
+        // A second click while saving is ignored.
+        click(cx);
+        assert_eq!(
+            *requests.borrow(),
+            [ReminderDetailsEvent::SetDone {
+                task_id: 7,
+                done: true
+            }]
+        );
+
+        cx.update(|cx| view.update(cx, |view, cx| view.set_error("Server unavailable", cx)));
+        assert!(has_label(
+            cx,
+            "Couldn't update the task: Server unavailable"
+        ));
+
+        let done = Task {
+            done: true,
+            ..task()
+        };
+        cx.update(|cx| view.update(cx, |view, cx| view.set_details(&details(&done), cx)));
+        assert!(has_label(cx, "Mark as not done"));
+        assert!(has_label(cx, "Status: Done"));
+        assert!(!has_label(
+            cx,
+            "Couldn't update the task: Server unavailable"
+        ));
     }
 }
