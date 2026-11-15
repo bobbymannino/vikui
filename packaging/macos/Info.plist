@@ -8,6 +8,8 @@
 	<string>Vikui</string>
 	<key>CFBundleExecutable</key>
 	<string>vikui</string>
+	<key>CFBundleIconFile</key>
+	<string>vikui</string>
 	<key>CFBundleIdentifier</key>
 	<string>dev.bobman.vikui</string>
 	<key>CFBundleInfoDictionaryVersion</key>

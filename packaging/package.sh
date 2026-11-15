@@ -32,6 +32,7 @@ case "$target" in
     app="$stage/Vikui.app"
     mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources"
     cp "$release/vikui" "$app/Contents/MacOS/vikui"
+    cp "$root/packaging/icon/vikui.icns" "$app/Contents/Resources/vikui.icns"
     sed "s/@VERSION@/$version/g" "$root/packaging/macos/Info.plist" >"$app/Contents/Info.plist"
     # Not notarized; an ad-hoc signature is still required to run on Apple silicon.
     codesign --force --deep --sign - "$app"
