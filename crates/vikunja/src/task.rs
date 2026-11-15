@@ -74,10 +74,16 @@ impl SavedFilter {
 }
 
 /// A Vikunja task, with the fields Vikui uses.
-#[derive(Clone, Debug, PartialEq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Deserialize)]
 pub struct Task {
     pub id: i64,
     pub title: String,
+    /// Rich text (HTML); see [`Task::plain_description`].
+    #[serde(default)]
+    pub description: String,
+    /// `0` unset, then 1 (low) to 5 (do now).
+    #[serde(default)]
+    pub priority: i64,
     #[serde(default)]
     pub project_id: i64,
     /// Human-readable reference such as `HOME-12`; may be empty.
@@ -94,6 +100,14 @@ pub struct Task {
     /// `null` when the task has none.
     #[serde(default, deserialize_with = "null_as_empty")]
     pub reminders: Vec<TaskReminder>,
+}
+
+impl Task {
+    /// The description as a single line of plain text, with HTML tags removed.
+    #[must_use]
+    pub fn plain_description(&self) -> String {
+        crate::project::html_to_plain_text(&self.description)
+    }
 }
 
 /// One reminder on a task.
@@ -186,6 +200,7 @@ mod tests {
     fn deserializes_tasks_with_absolute_and_relative_reminders() {
         let json = r#"{
             "id": 7, "title": "Pay rent", "project_id": 3, "identifier": "HOME-7",
+            "description": "<p>Transfer &amp; confirm</p>", "priority": 3,
             "done": false,
             "due_date": "2026-12-01T09:00:00Z",
             "start_date": "0001-01-01T00:00:00Z",
@@ -197,6 +212,8 @@ mod tests {
             ]
         }"#;
         let task: Task = serde_json::from_str(json).unwrap();
+        assert_eq!(task.plain_description(), "Transfer & confirm");
+        assert_eq!(task.priority, 3);
         assert_eq!(task.due_date, Some("2026-12-01T09:00:00Z".parse().unwrap()));
         assert_eq!(task.start_date, None);
         assert_eq!(task.end_date, None);

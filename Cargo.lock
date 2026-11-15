@@ -6246,6 +6246,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
+name = "reminder-details"
+version = "0.1.0"
+dependencies = [
+ "jiff",
+ "reminders",
+ "vikunja",
+]
+
+[[package]]
+name = "reminder-details-ui"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "jiff",
+ "reminder-details",
+ "reminders",
+ "vikunja",
+]
+
+[[package]]
 name = "reminders"
 version = "0.1.0"
 dependencies = [
@@ -6259,6 +6279,7 @@ version = "0.1.0"
 dependencies = [
  "gpui-kit",
  "jiff",
+ "log",
  "reminders",
  "vikunja",
 ]
@@ -8003,6 +8024,8 @@ dependencies = [
  "login-ui",
  "overview-ui",
  "projects-ui",
+ "reminder-details",
+ "reminder-details-ui",
  "reminders",
  "reminders-ui",
  "vikunja",

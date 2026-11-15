@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 gpui-kit.workspace = true
 jiff.workspace = true
+log.workspace = true
 reminders.workspace = true
 
 [dev-dependencies]

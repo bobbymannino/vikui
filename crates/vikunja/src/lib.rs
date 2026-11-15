@@ -198,16 +198,45 @@ impl Client {
 
     /// One saved filter, including the query it stores.
     pub fn saved_filter(&self, token: &Token, filter_id: i64) -> Result<SavedFilter, Error> {
+        self.get_json(token, &format!("filters/{filter_id}"))
+    }
+
+    /// Mark a task done (or not done) and return it as the server saved it.
+    ///
+    /// Vikunja's update replaces every field, so this reads the whole task, changes only
+    /// `done`, and sends the rest back unchanged.
+    pub fn set_task_done(&self, token: &Token, task_id: i64, done: bool) -> Result<Task, Error> {
+        let path = format!("tasks/{task_id}");
+        let mut task: serde_json::Value = self.get_json(token, &path)?;
+        set_done(&mut task, done);
+        self.post_json(token, &path, &task)
+    }
+
+    fn get_json<T: DeserializeOwned>(&self, token: &Token, path: &str) -> Result<T, Error> {
         let mut response = self
             .agent
-            .get(
-                self.server
-                    .endpoint(&format!("filters/{filter_id}"))
-                    .as_str(),
-            )
+            .get(self.server.endpoint(path).as_str())
             .header("Accept", ACCEPT_JSON)
             .header("Authorization", &format!("Bearer {}", token.expose()))
             .call()?;
+        if !response.status().is_success() {
+            return Err(error_from(&mut response));
+        }
+        Ok(response.body_mut().read_json()?)
+    }
+
+    fn post_json<T: DeserializeOwned>(
+        &self,
+        token: &Token,
+        path: &str,
+        body: &impl Serialize,
+    ) -> Result<T, Error> {
+        let mut response = self
+            .agent
+            .post(self.server.endpoint(path).as_str())
+            .header("Accept", ACCEPT_JSON)
+            .header("Authorization", &format!("Bearer {}", token.expose()))
+            .send_json(body)?;
         if !response.status().is_success() {
             return Err(error_from(&mut response));
         }
@@ -262,6 +291,13 @@ impl Client {
 
 type Response = ureq::http::Response<ureq::Body>;
 
+/// Set `done` on a task's JSON, leaving every other field as the server sent it.
+fn set_done(task: &mut serde_json::Value, done: bool) {
+    if let Some(fields) = task.as_object_mut() {
+        fields.insert("done".to_owned(), serde_json::Value::Bool(done));
+    }
+}
+
 fn auth_from(response: &mut Response) -> Result<Auth, Error> {
     if !response.status().is_success() {
         return Err(error_from(response));
@@ -308,6 +344,22 @@ mod tests {
             ),
         );
         assert_eq!(refresh_cookie(&headers), Some(RefreshToken::new("abc.def")));
+    }
+
+    #[test]
+    fn set_done_keeps_other_fields() {
+        let mut task = serde_json::json!({
+            "id": 7, "title": "Pay rent", "done": false, "description": "<p>x</p>",
+            "labels": [{"id": 1}], "repeat_after": 86400
+        });
+        set_done(&mut task, true);
+        assert_eq!(
+            task,
+            serde_json::json!({
+                "id": 7, "title": "Pay rent", "done": true, "description": "<p>x</p>",
+                "labels": [{"id": 1}], "repeat_after": 86400
+            })
+        );
     }
 
     #[test]

@@ -25,6 +25,7 @@ fn main() {
     app.run(|cx| {
         gpui_kit::init(cx);
         projects_ui::init(cx);
+        reminders_ui::init(cx);
         Theme::sync_system_appearance(None, cx);
         quit_when_last_window_closes(cx);
 

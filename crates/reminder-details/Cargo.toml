@@ -1,0 +1,15 @@
+[package]
+name = "reminder-details"
+description = "Details of one reminder and its task for Vikui, no UI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+jiff.workspace = true
+reminders.workspace = true
+vikunja.workspace = true
+
+[lints]
+workspace = true

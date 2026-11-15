@@ -1,13 +1,15 @@
 //! Table delegate listing reminders.
 
 use std::cmp::Ordering;
+use std::rc::Rc;
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::{
-    App, Context, InteractiveElement as _, IntoElement, ParentElement as _, Role, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Window, div, prelude::FluentBuilder as _,
+    App, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, Role,
+    SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,
+    prelude::FluentBuilder as _,
 };
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
@@ -27,8 +29,8 @@ pub struct ReminderRow {
     pub inactive: bool,
     /// A real reminder, not a task listed without one.
     pub is_set: bool,
-    /// Input order, used to undo sorting.
-    order: usize,
+    /// Index into the reminders the rows were made from; stable across sorting.
+    pub order: usize,
 }
 
 impl ReminderRow {
@@ -38,40 +40,15 @@ impl ReminderRow {
             .iter()
             .enumerate()
             .map(|(order, reminder)| {
-                let past = reminder.is_past(now);
-                let unscheduled = reminder.unscheduled_reason();
-                let status = if reminder.task_done {
-                    "Task done"
-                } else if !reminder.is_set {
-                    "Open"
-                } else if unscheduled.is_some() {
-                    "Not scheduled"
-                } else if past {
-                    "Past"
-                } else {
-                    "Upcoming"
-                };
-                let when = match (reminder.at, unscheduled) {
-                    (Some(at), _) => at
-                        .to_zoned(zone.clone())
-                        .strftime("%a %-d %b %Y, %H:%M")
-                        .to_string()
-                        .into(),
-                    (None, reason) => reason.unwrap_or_default().into(),
-                };
+                let status = reminder.status(now);
                 Self {
                     at: reminder.at,
-                    when,
+                    when: reminder.when(zone).into(),
                     task: reminder.task_title.clone().into(),
                     identifier: reminder.task_identifier.clone().into(),
-                    schedule: match reminder.relative_description() {
-                        Some(relative) => relative.into(),
-                        None if reminder.is_set => "Fixed time".into(),
-                        None => SharedString::default(),
-                    },
-                    status: status.into(),
-                    inactive: reminder.task_done
-                        || (reminder.is_set && (past || unscheduled.is_some())),
+                    schedule: reminder.schedule().into(),
+                    status: status.label().into(),
+                    inactive: status.is_inactive(),
                     is_set: reminder.is_set,
                     order,
                 }
@@ -113,8 +90,12 @@ impl Col {
     }
 }
 
+/// Called with the clicked row's index (in display order).
+pub type OnRowClick = Rc<dyn Fn(usize, &mut Window, &mut App)>;
+
 pub struct RemindersTable {
     rows: Vec<ReminderRow>,
+    on_row_click: Option<OnRowClick>,
     loading: bool,
     /// Shown when there are no rows.
     empty_message: SharedString,
@@ -125,6 +106,7 @@ impl Default for RemindersTable {
     fn default() -> Self {
         Self {
             rows: Vec::new(),
+            on_row_click: None,
             loading: false,
             empty_message: "No reminders.".into(),
             sort: None,
@@ -145,6 +127,15 @@ impl RemindersTable {
         self.rows = rows;
         self.loading = false;
         self.apply_sort();
+    }
+
+    /// Runs on every left click on a row, in addition to the table selecting it.
+    pub fn set_on_row_click(&mut self, on_row_click: OnRowClick) {
+        self.on_row_click = Some(on_row_click);
+    }
+
+    pub fn row(&self, row_ix: usize) -> Option<&ReminderRow> {
+        self.rows.get(row_ix)
     }
 
     #[cfg(test)]
@@ -215,6 +206,19 @@ impl TableDelegate for RemindersTable {
         self.sort = Col::at(col_ix).map(|col| (col, sort));
         self.apply_sort();
         cx.notify();
+    }
+
+    fn render_tr(
+        &mut self,
+        row_ix: usize,
+        _: &mut Window,
+        _: &mut Context<TableState<Self>>,
+    ) -> Stateful<Div> {
+        div()
+            .id(("row", row_ix))
+            .when_some(self.on_row_click.clone(), |row, on_click| {
+                row.on_click(move |_, window, cx| on_click(row_ix, window, cx))
+            })
     }
 
     fn render_td(
