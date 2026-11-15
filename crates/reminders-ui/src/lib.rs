@@ -6,6 +6,9 @@
 //! Clicking a row (or pressing Enter on it) toggles a details side panel. The view only
 //! reserves the space and reports [`RemindersEvent::ShowDetails`]; the caller supplies
 //! the panel with [`RemindersView::set_details_panel`] and fills it in.
+//!
+//! The Refresh button (or Cmd/Ctrl+R) reports [`RemindersEvent::Refresh`]; the caller
+//! loads the reminders again and passes them to [`RemindersView::set_reminders`].
 
 mod reminders_table;
 
@@ -13,13 +16,14 @@ use std::rc::Rc;
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::alert::Alert;
+use gpui_kit::component::button::Button;
 use gpui_kit::component::table::{DataTable, TableEvent, TableState};
-use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
 use gpui_kit::{
     AnyView, AnyWindowHandle, App, AppContext as _, Context, Entity, EventEmitter, Focusable as _,
-    FontWeight, InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, Role,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
-    WindowOptions, div, prelude::FluentBuilder as _, px,
+    FontWeight, InteractiveElement as _, IntoElement, KeyBinding, KeyBindingContextPredicate,
+    ParentElement as _, Render, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Subscription, Window, WindowOptions, div, prelude::FluentBuilder as _, px,
 };
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
@@ -27,7 +31,7 @@ use reminders::Reminder;
 
 use reminders_table::{ReminderRow, RemindersTable};
 
-gpui_kit::actions!(reminders, [ToggleDetails]);
+gpui_kit::actions!(reminders, [ToggleDetails, Refresh]);
 
 const CONTEXT: &str = "Reminders";
 const DETAILS_WIDTH: f32 = 340.;
@@ -35,6 +39,13 @@ const DETAILS_WIDTH: f32 = 340.;
 /// Register the reminders view's key bindings. Call once at startup.
 pub fn init(cx: &mut App) {
     cx.bind_keys([KeyBinding::new("enter", ToggleDetails, Some(CONTEXT))]);
+    // `KeyBinding::new` only accepts explicit modifiers; `load` resolves `secondary-`
+    // to Cmd on macOS and Ctrl elsewhere.
+    let context = KeyBindingContextPredicate::parse(CONTEXT).ok().map(Rc::new);
+    match KeyBinding::load("secondary-r", Box::new(Refresh), context, false, None, cx) {
+        Ok(binding) => cx.bind_keys([binding]),
+        Err(err) => log::error!("invalid refresh key binding: {err}"),
+    }
 }
 
 /// Events for the app to act on.
@@ -42,6 +53,9 @@ pub fn init(cx: &mut App) {
 pub enum RemindersEvent {
     /// The details panel opened on, or moved to, this reminder; fill the panel in.
     ShowDetails(Reminder),
+    /// The user asked to reload the reminders; answer with [`RemindersView::set_reminders`]
+    /// or [`RemindersView::set_error`].
+    Refresh,
 }
 
 /// A titled, sortable list of reminders with an optional details panel.
@@ -50,6 +64,8 @@ pub struct RemindersView {
     table: Entity<TableState<RemindersTable>>,
     summary: SharedString,
     error: Option<SharedString>,
+    /// Waiting for reminders (the first load or a refresh).
+    loading: bool,
     /// What the rows were made from; rows refer to it by `order`.
     reminders: Vec<Reminder>,
     matched_tasks: Option<usize>,
@@ -94,6 +110,7 @@ impl RemindersView {
             table,
             summary: SharedString::default(),
             error: None,
+            loading: reminders.is_none(),
             reminders: Vec::new(),
             matched_tasks: None,
             details_panel: None,
@@ -114,17 +131,44 @@ impl RemindersView {
     ///
     /// `matched_tasks` is how many tasks the reminders came from, if known; tasks without
     /// a reminder are listed too, so an empty list means no tasks matched.
+    ///
+    /// An open details panel stays open if its reminder is still listed (and is shown
+    /// again with [`RemindersEvent::ShowDetails`]); otherwise it closes.
     pub fn set_reminders(
         &mut self,
         reminders: &[Reminder],
         matched_tasks: Option<usize>,
         cx: &mut Context<Self>,
     ) {
+        let shown = self
+            .details_for
+            .and_then(|order| self.reminders.get(order))
+            .cloned();
         self.error = None;
+        self.loading = false;
         self.reminders = reminders.to_vec();
         self.matched_tasks = matched_tasks;
-        self.details_for = None;
+        self.details_for = shown.and_then(|shown| {
+            self.reminders
+                .iter()
+                .position(|reminder| same_reminder(reminder, &shown))
+        });
         self.refresh_rows(cx);
+        if let Some(reminder) = self
+            .details_for
+            .and_then(|order| self.reminders.get(order))
+            .cloned()
+        {
+            cx.emit(RemindersEvent::ShowDetails(reminder));
+        }
+    }
+
+    fn on_refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
+        if !self.loading {
+            self.loading = true;
+            cx.emit(RemindersEvent::Refresh);
+            cx.notify();
+        }
     }
 
     /// Mark every reminder of `task_id` done or not done, keeping the list's order,
@@ -221,6 +265,7 @@ impl RemindersView {
 
     /// Show why the reminders could not be loaded.
     pub fn set_error(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
+        self.loading = false;
         self.error = Some(message.into());
         self.table.update(cx, |table, cx| {
             table.delegate_mut().set_loading(false);
@@ -232,6 +277,11 @@ impl RemindersView {
 
 fn plural(count: usize, word: &str) -> String {
     format!("{count} {word}{}", if count == 1 { "" } else { "s" })
+}
+
+/// Whether `a` and `b` are the same reminder of the same task, across reloads.
+fn same_reminder(a: &Reminder, b: &Reminder) -> bool {
+    a.task_id == b.task_id && a.is_set == b.is_set && a.at == b.at && a.relative == b.relative
 }
 
 /// "2 reminders on 5 tasks, 1 upcoming".
@@ -266,6 +316,7 @@ impl Render for RemindersView {
             .id("reminders")
             .key_context(CONTEXT)
             .on_action(cx.listener(Self::on_toggle_details))
+            .on_action(cx.listener(Self::on_refresh))
             .size_full()
             .gap_4()
             .p_6()
@@ -283,9 +334,26 @@ impl Render for RemindersView {
                     )
                     .child(
                         div()
+                            .flex_1()
                             .text_sm()
                             .text_color(theme.muted_foreground)
                             .child(self.summary.clone()),
+                    )
+                    .child(
+                        Button::new("refresh-reminders")
+                            .outline()
+                            .label(if self.loading {
+                                "Refreshing…"
+                            } else {
+                                "Refresh"
+                            })
+                            .accessibility_label("Refresh reminders")
+                            .tooltip_with_action("Refresh reminders", &Refresh, Some(CONTEXT))
+                            .loading(self.loading)
+                            .disabled(self.loading)
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.on_refresh(&Refresh, window, cx);
+                            })),
                     ),
             )
             .when_some(self.error.clone(), |this, message| {
@@ -461,8 +529,10 @@ mod tests {
             let panel = cx.new(|_| TestPanel);
             view.update(cx, |view, cx| view.set_details_panel(panel.into(), cx));
             let shown = Rc::clone(&shown);
-            cx.subscribe(&view, move |_, RemindersEvent::ShowDetails(reminder), _| {
-                shown.borrow_mut().push(reminder.task_title.clone());
+            cx.subscribe(&view, move |_, event: &RemindersEvent, _| {
+                if let RemindersEvent::ShowDetails(reminder) = event {
+                    shown.borrow_mut().push(reminder.task_title.clone());
+                }
             })
             .detach();
         });
@@ -542,6 +612,85 @@ mod tests {
         .unwrap();
         cx.update(|cx| view.update(cx, |view, cx| view.set_task_done(1, false, cx)));
         assert_eq!(status(cx).as_deref(), Some("Upcoming"));
+    }
+
+    #[gpui_kit::test]
+    fn refresh_reloads_and_keeps_the_open_reminder(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let first = reminder(soon, "Pay rent");
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            open(options(), "Reminders – Home", None, cx).unwrap()
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let panel = cx.new(|_| TestPanel);
+            let events = Rc::clone(&events);
+            cx.subscribe(&view, move |_, event: &RemindersEvent, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
+            view.update(cx, |view, cx| {
+                view.set_details_panel(panel.into(), cx);
+                view.set_reminders(std::slice::from_ref(&first), Some(1), cx);
+                view.toggle_row(0, cx);
+            });
+        });
+        let click_refresh = |cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.click("refresh-reminders", cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        click_refresh(cx);
+        // Ignored while the reload is pending.
+        click_refresh(cx);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find_by_label("Test panel");
+        })
+        .unwrap();
+
+        // The task was renamed elsewhere and another one added; the panel stays on it.
+        let renamed = Reminder {
+            task_title: "Pay the rent".into(),
+            ..first.clone()
+        };
+        let added = Reminder {
+            task_id: 2,
+            ..reminder(soon - jiff::SignedDuration::from_hours(1), "Call landlord")
+        };
+        cx.update(|cx| {
+            view.update(cx, |view, cx| {
+                view.set_reminders(&[added, renamed.clone()], Some(2), cx);
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            *events.borrow(),
+            [
+                RemindersEvent::ShowDetails(first.clone()),
+                RemindersEvent::Refresh,
+                RemindersEvent::ShowDetails(renamed),
+            ]
+        );
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find_by_label("Test panel");
+        })
+        .unwrap();
+
+        // Gone after the next refresh: the panel closes.
+        click_refresh(cx);
+        cx.update(|cx| view.update(cx, |view, cx| view.set_reminders(&[], Some(0), cx)));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert!(window.try_find_by_label("Test panel").is_none());
+        })
+        .unwrap();
     }
 
     #[test]
