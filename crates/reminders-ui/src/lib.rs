@@ -58,8 +58,8 @@ impl RemindersView {
 
     /// Replace the listed reminders.
     ///
-    /// `matched_tasks` is how many tasks the reminders came from, if known. It explains an
-    /// empty list: tasks can match a project or filter without having any reminders.
+    /// `matched_tasks` is how many tasks the reminders came from, if known; tasks without
+    /// a reminder are listed too, so an empty list means no tasks matched.
     pub fn set_reminders(
         &mut self,
         reminders: &[Reminder],
@@ -67,8 +67,12 @@ impl RemindersView {
         cx: &mut Context<Self>,
     ) {
         let rows = ReminderRow::from_reminders(reminders, Timestamp::now(), &TimeZone::system());
-        let upcoming = rows.iter().filter(|row| !row.inactive).count();
-        self.summary = summary(rows.len(), upcoming, matched_tasks);
+        let set = rows.iter().filter(|row| row.is_set).count();
+        let upcoming = rows
+            .iter()
+            .filter(|row| row.is_set && !row.inactive)
+            .count();
+        self.summary = summary(set, upcoming, matched_tasks);
         let empty_message = empty_message(matched_tasks);
         self.error = None;
         self.table.update(cx, |table, cx| {
@@ -109,9 +113,7 @@ fn summary(reminders: usize, upcoming: usize, matched_tasks: Option<usize>) -> S
 fn empty_message(matched_tasks: Option<usize>) -> SharedString {
     match matched_tasks {
         None => "No reminders.".into(),
-        Some(0) => "No tasks match.".into(),
-        Some(1) => "The matching task has no reminders.".into(),
-        Some(tasks) => format!("None of the {tasks} matching tasks have reminders.").into(),
+        Some(_) => "No tasks match.".into(),
     }
 }
 
@@ -199,6 +201,7 @@ mod tests {
             task_identifier: "HOME-1".into(),
             project_id: 1,
             task_done: false,
+            is_set: true,
         }
     }
 
@@ -267,24 +270,28 @@ mod tests {
     fn summary_and_empty_message_mention_matched_tasks() {
         assert_eq!(summary(2, 1, Some(5)), "2 reminders on 5 tasks, 1 upcoming");
         assert_eq!(summary(1, 0, None), "1 reminder, 0 upcoming");
+        assert_eq!(summary(0, 0, Some(1)), "0 reminders on 1 task, 0 upcoming");
         assert_eq!(empty_message(None), "No reminders.");
         assert_eq!(empty_message(Some(0)), "No tasks match.");
-        assert_eq!(
-            empty_message(Some(3)),
-            "None of the 3 matching tasks have reminders."
-        );
     }
 
     #[gpui_kit::test]
-    fn explains_tasks_without_reminders(cx: &mut TestAppContext) {
+    fn lists_tasks_without_reminders(cx: &mut TestAppContext) {
         let (handle, view) = cx.update(|cx| {
             gpui_kit::init(cx);
             open(options(), "Reminders – Today", None, cx).unwrap()
         });
-        cx.update(|cx| view.update(cx, |view, cx| view.set_reminders(&[], Some(3), cx)));
+        let plain = Reminder {
+            at: None,
+            relative: None,
+            is_set: false,
+            ..reminder(Timestamp::now(), "Buy milk")
+        };
+        cx.update(|cx| view.update(cx, |view, cx| view.set_reminders(&[plain], Some(1), cx)));
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
-            window.find_by_label("None of the 3 matching tasks have reminders.");
+            window.find_by_label("Buy milk");
+            window.find_by_label("No reminder");
         })
         .unwrap();
     }

@@ -1,16 +1,17 @@
 //! Task reminders, independent of how they were fetched or how they are shown.
 //!
 //! Callers fetch tasks (from a project, a filter or a search), turn them into
-//! [`Reminder`]s with [`from_tasks`], and hand those to a view.
+//! [`Reminder`]s with [`from_tasks`], and hand those to a view. Every task is listed,
+//! whether or not it has a reminder set.
 
 use jiff::Timestamp;
 use vikunja::{Client, Error, RelativeReminder, RelativeTo, Task, TaskQuery, Token};
 
-/// One reminder, flattened out of its task.
+/// One reminder, flattened out of its task, or a task that has no reminder set.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Reminder {
-    /// `None` for a relative reminder whose date (e.g. the due date) is unset; it will
-    /// not fire until that date is set.
+    /// `None` for a task without a reminder, or for a relative reminder whose date
+    /// (e.g. the due date) is unset; it will not fire until that date is set.
     pub at: Option<Timestamp>,
     pub relative: Option<RelativeReminder>,
     pub task_id: i64,
@@ -19,6 +20,8 @@ pub struct Reminder {
     pub task_identifier: String,
     pub project_id: i64,
     pub task_done: bool,
+    /// `false` for a task listed without any reminder set on it.
+    pub is_set: bool,
 }
 
 impl Reminder {
@@ -33,11 +36,15 @@ impl Reminder {
         self.at.is_some_and(|at| at < now)
     }
 
-    /// "Due date not set" for a relative reminder that has no time yet.
+    /// "Due date not set" for a relative reminder that has no time yet; "No reminder"
+    /// for a task without one.
     #[must_use]
     pub fn unscheduled_reason(&self) -> Option<&'static str> {
         if self.at.is_some() {
             return None;
+        }
+        if !self.is_set {
+            return Some("No reminder");
         }
         Some(match self.relative.map(|relative| relative.to) {
             Some(RelativeTo::Due) => "Due date not set",
@@ -48,21 +55,33 @@ impl Reminder {
     }
 }
 
-/// Every reminder on `tasks`, earliest first; reminders without a time come last.
+/// Every reminder on `tasks`, plus one entry per task that has none, earliest first;
+/// entries without a time come last.
 #[must_use]
 pub fn from_tasks(tasks: &[Task]) -> Vec<Reminder> {
     let mut reminders: Vec<Reminder> = tasks
         .iter()
         .flat_map(|task| {
-            task.reminders.iter().map(move |reminder| Reminder {
-                at: reminder.at,
-                relative: reminder.relative,
+            let entry = |at, relative, is_set| Reminder {
+                at,
+                relative,
                 task_id: task.id,
                 task_title: task.title.clone(),
                 task_identifier: task.identifier.clone(),
                 project_id: task.project_id,
                 task_done: task.done,
-            })
+                is_set,
+            };
+            let set: Vec<Reminder> = task
+                .reminders
+                .iter()
+                .map(|reminder| entry(reminder.at, reminder.relative, true))
+                .collect();
+            if set.is_empty() {
+                vec![entry(None, None, false)]
+            } else {
+                set
+            }
         })
         .collect();
     reminders.sort_by_key(|reminder| (reminder.at.is_none(), reminder.at, reminder.task_id));
@@ -243,11 +262,15 @@ mod tests {
                 ("Later", Some(ts("2026-12-02T09:00:00Z"))),
                 ("Two reminders", Some(ts("2026-12-03T09:00:00Z"))),
                 ("Two reminders", None),
+                ("None", None),
             ]
         );
-        let unscheduled = reminders.last().unwrap();
+        let unscheduled = &reminders[3];
         assert_eq!(unscheduled.unscheduled_reason(), Some("Due date not set"));
         assert!(!unscheduled.is_past(ts("2030-01-01T00:00:00Z")));
+        let without = &reminders[4];
+        assert!(!without.is_set);
+        assert_eq!(without.unscheduled_reason(), Some("No reminder"));
     }
 
     #[test]

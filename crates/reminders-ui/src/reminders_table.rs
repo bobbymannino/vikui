@@ -23,8 +23,10 @@ pub struct ReminderRow {
     pub schedule: SharedString,
     pub status: SharedString,
     /// Fired already, not scheduled, or its task is done: drawn muted (and says so in
-    /// `status`).
+    /// `status`). Tasks without a reminder are not muted unless done.
     pub inactive: bool,
+    /// A real reminder, not a task listed without one.
+    pub is_set: bool,
     /// Input order, used to undo sorting.
     order: usize,
 }
@@ -40,6 +42,8 @@ impl ReminderRow {
                 let unscheduled = reminder.unscheduled_reason();
                 let status = if reminder.task_done {
                     "Task done"
+                } else if !reminder.is_set {
+                    "Open"
                 } else if unscheduled.is_some() {
                     "Not scheduled"
                 } else if past {
@@ -60,12 +64,15 @@ impl ReminderRow {
                     when,
                     task: reminder.task_title.clone().into(),
                     identifier: reminder.task_identifier.clone().into(),
-                    schedule: reminder
-                        .relative_description()
-                        .unwrap_or_else(|| "Fixed time".to_owned())
-                        .into(),
+                    schedule: match reminder.relative_description() {
+                        Some(relative) => relative.into(),
+                        None if reminder.is_set => "Fixed time".into(),
+                        None => SharedString::default(),
+                    },
                     status: status.into(),
-                    inactive: past || unscheduled.is_some() || reminder.task_done,
+                    inactive: reminder.task_done
+                        || (reminder.is_set && (past || unscheduled.is_some())),
+                    is_set: reminder.is_set,
                     order,
                 }
             })
@@ -271,7 +278,28 @@ mod tests {
             task_identifier: String::new(),
             project_id: 1,
             task_done: done,
+            is_set: true,
         }
+    }
+
+    #[test]
+    fn tasks_without_reminders_are_listed_unmuted() {
+        let now: Timestamp = "2026-01-01T00:00:00Z".parse().unwrap();
+        let without = |done| Reminder {
+            at: None,
+            relative: None,
+            is_set: false,
+            ..reminder("2026-01-02T00:00:00Z", "Plain task", done)
+        };
+        let rows =
+            ReminderRow::from_reminders(&[without(false), without(true)], now, &TimeZone::UTC);
+        assert_eq!(rows[0].when, "No reminder");
+        assert_eq!(rows[0].schedule, "");
+        assert_eq!(rows[0].status, "Open");
+        assert!(!rows[0].inactive);
+        assert!(!rows[0].is_set);
+        assert_eq!(rows[1].status, "Task done");
+        assert!(rows[1].inactive);
     }
 
     #[test]
