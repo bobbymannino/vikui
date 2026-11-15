@@ -38,40 +38,15 @@ impl ReminderRow {
             .iter()
             .enumerate()
             .map(|(order, reminder)| {
-                let past = reminder.is_past(now);
-                let unscheduled = reminder.unscheduled_reason();
-                let status = if reminder.task_done {
-                    "Task done"
-                } else if !reminder.is_set {
-                    "Open"
-                } else if unscheduled.is_some() {
-                    "Not scheduled"
-                } else if past {
-                    "Past"
-                } else {
-                    "Upcoming"
-                };
-                let when = match (reminder.at, unscheduled) {
-                    (Some(at), _) => at
-                        .to_zoned(zone.clone())
-                        .strftime("%a %-d %b %Y, %H:%M")
-                        .to_string()
-                        .into(),
-                    (None, reason) => reason.unwrap_or_default().into(),
-                };
+                let status = reminder.status(now);
                 Self {
                     at: reminder.at,
-                    when,
+                    when: reminder.when(zone).into(),
                     task: reminder.task_title.clone().into(),
                     identifier: reminder.task_identifier.clone().into(),
-                    schedule: match reminder.relative_description() {
-                        Some(relative) => relative.into(),
-                        None if reminder.is_set => "Fixed time".into(),
-                        None => SharedString::default(),
-                    },
-                    status: status.into(),
-                    inactive: reminder.task_done
-                        || (reminder.is_set && (past || unscheduled.is_some())),
+                    schedule: reminder.schedule().into(),
+                    status: status.label().into(),
+                    inactive: status.is_inactive(),
                     is_set: reminder.is_set,
                     order,
                 }

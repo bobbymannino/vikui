@@ -5,6 +5,7 @@
 //! whether or not it has a reminder set.
 
 use jiff::Timestamp;
+use jiff::tz::TimeZone;
 use vikunja::{Client, Error, RelativeReminder, RelativeTo, Task, TaskQuery, Token};
 
 /// One reminder, flattened out of its task, or a task that has no reminder set.
@@ -53,6 +54,84 @@ impl Reminder {
             None => "No time set",
         })
     }
+}
+
+/// Where a reminder stands, for its status label and whether to draw it muted.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Status {
+    /// Its task is done.
+    TaskDone,
+    /// A task without any reminder that is not done.
+    Open,
+    /// A relative reminder whose date is unset.
+    NotScheduled,
+    Past,
+    Upcoming,
+}
+
+impl Status {
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::TaskDone => "Task done",
+            Self::Open => "Open",
+            Self::NotScheduled => "Not scheduled",
+            Self::Past => "Past",
+            Self::Upcoming => "Upcoming",
+        }
+    }
+
+    /// Done, fired already or not scheduled; a plain open task is not inactive.
+    #[must_use]
+    pub fn is_inactive(self) -> bool {
+        matches!(self, Self::TaskDone | Self::NotScheduled | Self::Past)
+    }
+}
+
+impl Reminder {
+    /// Its status at `now`.
+    #[must_use]
+    pub fn status(&self, now: Timestamp) -> Status {
+        if self.task_done {
+            Status::TaskDone
+        } else if !self.is_set {
+            Status::Open
+        } else if self.at.is_none() {
+            Status::NotScheduled
+        } else if self.is_past(now) {
+            Status::Past
+        } else {
+            Status::Upcoming
+        }
+    }
+
+    /// "Fixed time", "1 hour before due date", or empty for a task without a reminder.
+    #[must_use]
+    pub fn schedule(&self) -> String {
+        match self.relative_description() {
+            Some(relative) => relative,
+            None if self.is_set => "Fixed time".to_owned(),
+            None => String::new(),
+        }
+    }
+
+    /// The time it fires in `zone`, or why it has none (see
+    /// [`Reminder::unscheduled_reason`]).
+    #[must_use]
+    pub fn when(&self, zone: &TimeZone) -> String {
+        match self.at {
+            Some(at) => format_time(at, zone),
+            None => self.unscheduled_reason().unwrap_or_default().to_owned(),
+        }
+    }
+}
+
+/// "Tue 1 Dec 2026, 09:00" in `zone`.
+#[must_use]
+pub fn format_time(at: Timestamp, zone: &TimeZone) -> String {
+    at.to_zoned(zone.clone())
+        .strftime("%a %-d %b %Y, %H:%M")
+        .to_string()
 }
 
 /// Every reminder on `tasks`, plus one entry per task that has none, earliest first;
@@ -267,6 +346,24 @@ mod tests {
         let without = &reminders[4];
         assert!(!without.is_set);
         assert_eq!(without.unscheduled_reason(), Some("No reminder"));
+
+        let now = ts("2026-12-02T12:00:00Z");
+        let statuses: Vec<_> = reminders.iter().map(|r| r.status(now)).collect();
+        assert_eq!(
+            statuses,
+            [
+                Status::Past,
+                Status::Past,
+                Status::Upcoming,
+                Status::NotScheduled,
+                Status::Open
+            ]
+        );
+        assert!(!Status::Open.is_inactive());
+        assert_eq!(reminders[0].when(&TimeZone::UTC), "Tue 1 Dec 2026, 09:00");
+        assert_eq!(reminders[0].schedule(), "Fixed time");
+        assert_eq!(without.when(&TimeZone::UTC), "No reminder");
+        assert_eq!(without.schedule(), "");
     }
 
     #[test]
