@@ -207,12 +207,8 @@ mod tests {
             id,
             title: title.into(),
             project_id: 1,
-            identifier: String::new(),
-            done: false,
-            due_date: None,
-            start_date: None,
-            end_date: None,
             reminders,
+            ..Task::default()
         }
     }
 

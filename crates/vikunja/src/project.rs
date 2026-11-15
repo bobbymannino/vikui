@@ -58,7 +58,7 @@ impl Project {
     }
 }
 
-fn html_to_plain_text(html: &str) -> String {
+pub(crate) fn html_to_plain_text(html: &str) -> String {
     let mut text = String::with_capacity(html.len());
     let mut in_tag = false;
     for ch in html.chars() {
