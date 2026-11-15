@@ -6255,6 +6255,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "reminder-details-ui"
+version = "0.1.0"
+dependencies = [
+ "gpui-kit",
+ "jiff",
+ "reminder-details",
+ "reminders",
+ "vikunja",
+]
+
+[[package]]
 name = "reminders"
 version = "0.1.0"
 dependencies = [

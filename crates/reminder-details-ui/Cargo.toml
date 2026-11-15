@@ -1,0 +1,20 @@
+[package]
+name = "reminder-details-ui"
+description = "Vikui's side panel showing one reminder and its task"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+gpui-kit.workspace = true
+jiff.workspace = true
+reminder-details.workspace = true
+reminders.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+vikunja.workspace = true
+
+[lints]
+workspace = true
