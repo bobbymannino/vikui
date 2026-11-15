@@ -9,6 +9,10 @@
 //!
 //! The Refresh button (or Cmd/Ctrl+R) reports [`RemindersEvent::Refresh`]; the caller
 //! loads the reminders again and passes them to [`RemindersView::set_reminders`].
+//!
+//! Pressing T (as in Vikunja's web app) reports [`RemindersEvent::SetDone`] for the
+//! selected row's task; the caller saves it and answers with
+//! [`RemindersView::set_task_done`].
 
 mod reminders_table;
 
@@ -31,14 +35,17 @@ use reminders::Reminder;
 
 use reminders_table::{ReminderRow, RemindersTable};
 
-gpui_kit::actions!(reminders, [ToggleDetails, Refresh]);
+gpui_kit::actions!(reminders, [ToggleDetails, ToggleDone, Refresh]);
 
 const CONTEXT: &str = "Reminders";
 const DETAILS_WIDTH: f32 = 340.;
 
 /// Register the reminders view's key bindings. Call once at startup.
 pub fn init(cx: &mut App) {
-    cx.bind_keys([KeyBinding::new("enter", ToggleDetails, Some(CONTEXT))]);
+    cx.bind_keys([
+        KeyBinding::new("enter", ToggleDetails, Some(CONTEXT)),
+        KeyBinding::new("t", ToggleDone, Some(CONTEXT)),
+    ]);
     // `KeyBinding::new` only accepts explicit modifiers; `load` resolves `secondary-`
     // to Cmd on macOS and Ctrl elsewhere.
     let context = KeyBindingContextPredicate::parse(CONTEXT).ok().map(Rc::new);
@@ -56,6 +63,8 @@ pub enum RemindersEvent {
     /// The user asked to reload the reminders; answer with [`RemindersView::set_reminders`]
     /// or [`RemindersView::set_error`].
     Refresh,
+    /// The user asked to mark the selected row's task done (or not done).
+    SetDone { task_id: i64, done: bool },
 }
 
 /// A titled, sortable list of reminders with an optional details panel.
@@ -263,6 +272,22 @@ impl RemindersView {
         }
     }
 
+    fn on_toggle_done(&mut self, _: &ToggleDone, _: &mut Window, cx: &mut Context<Self>) {
+        let Some(reminder) = self
+            .table
+            .read(cx)
+            .selected_row()
+            .and_then(|row_ix| self.order_of(row_ix, cx))
+            .and_then(|order| self.reminders.get(order))
+        else {
+            return;
+        };
+        cx.emit(RemindersEvent::SetDone {
+            task_id: reminder.task_id,
+            done: !reminder.task_done,
+        });
+    }
+
     /// Show why the reminders could not be loaded.
     pub fn set_error(&mut self, message: impl Into<SharedString>, cx: &mut Context<Self>) {
         self.loading = false;
@@ -316,6 +341,7 @@ impl Render for RemindersView {
             .id("reminders")
             .key_context(CONTEXT)
             .on_action(cx.listener(Self::on_toggle_details))
+            .on_action(cx.listener(Self::on_toggle_done))
             .on_action(cx.listener(Self::on_refresh))
             .size_full()
             .gap_4()
@@ -691,6 +717,55 @@ mod tests {
             assert!(window.try_find_by_label("Test panel").is_none());
         })
         .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn t_asks_to_toggle_the_selected_task(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let reminders = vec![reminder(soon, "Pay rent")];
+            open(options(), "Reminders – Home", Some(reminders), cx).unwrap()
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = Rc::clone(&events);
+            cx.subscribe(&view, move |_, event: &RemindersEvent, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        let key = |cx: &mut TestAppContext, key: &str| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.key_down(key, false, cx);
+                window.key_up(key, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        // Nothing is selected yet.
+        key(cx, "t");
+        assert!(events.borrow().is_empty());
+
+        key(cx, "down");
+        key(cx, "t");
+        cx.update(|cx| view.update(cx, |view, cx| view.set_task_done(1, true, cx)));
+        key(cx, "t");
+        assert_eq!(
+            *events.borrow(),
+            [
+                RemindersEvent::SetDone {
+                    task_id: 1,
+                    done: true
+                },
+                RemindersEvent::SetDone {
+                    task_id: 1,
+                    done: false
+                },
+            ]
+        );
     }
 
     #[test]

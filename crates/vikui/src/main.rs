@@ -1,6 +1,8 @@
 // Release builds on Windows are GUI apps: don't open a console window.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
+mod app_actions;
+mod app_menu;
 mod reminders_window;
 
 use std::cell::Cell;
@@ -24,8 +26,11 @@ fn main() {
     let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
     app.run(|cx| {
         gpui_kit::init(cx);
+        app_actions::init(cx);
         projects_ui::init(cx);
         reminders_ui::init(cx);
+        // Last, so the menus show every key binding.
+        app_menu::init(cx);
         Theme::sync_system_appearance(None, cx);
         quit_when_last_window_closes(cx);
 
