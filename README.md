@@ -44,12 +44,15 @@ sudo apt install libvulkan1 mesa-vulkan-drivers libxkbcommon0 libxkbcommon-x11-0
 
 On Fedora: `sudo dnf install vulkan-loader mesa-vulkan-drivers libxkbcommon-x11 gnome-keyring`.
 
-Then extract the archive and put the binary on your `PATH`:
+Then extract the archive, put the binary on your `PATH` and add Vikui to your app
+launcher:
 
 ```sh
 tar -xzf vikui-<version>-linux-<arch>.tar.gz
-install -Dm755 vikui-<version>-linux-<arch>/vikui ~/.local/bin/vikui
-vikui
+cd vikui-<version>-linux-<arch>
+install -Dm755 vikui ~/.local/bin/vikui
+install -Dm644 dev.bobman.vikui.desktop ~/.local/share/applications/dev.bobman.vikui.desktop
+install -Dm644 dev.bobman.vikui.png ~/.local/share/icons/hicolor/512x512/apps/dev.bobman.vikui.png
 ```
 
 ### Windows
