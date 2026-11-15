@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Vikui
+GenericName=Task Reminders
+Comment=Desktop client for Vikunja
+Exec=vikui
+Icon=dev.bobman.vikui
+Terminal=false
+Categories=Office;ProjectManagement;
+Keywords=vikunja;tasks;todo;reminders;
+StartupWMClass=dev.bobman.vikui

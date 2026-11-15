@@ -5,7 +5,7 @@
 #
 # Expects `cargo build --release --target <rust-target>` to have run. Produces
 #   macOS:   dist/vikui-<version>-macos-<arch>.zip     (Vikui.app, ad-hoc signed)
-#   Linux:   dist/vikui-<version>-linux-<arch>.tar.gz
+#   Linux:   dist/vikui-<version>-linux-<arch>.tar.gz  (with a desktop entry and icon)
 #   Windows: dist/vikui-<version>-windows-<arch>.zip
 set -euo pipefail
 
@@ -43,6 +43,8 @@ case "$target" in
     name="vikui-$version-linux-$arch"
     mkdir -p "$stage/$name"
     cp "$release/vikui" "$root/README.md" "$stage/$name/"
+    cp "$root/packaging/linux/dev.bobman.vikui.desktop" "$stage/$name/"
+    cp "$root/packaging/icon/vikui.png" "$stage/$name/dev.bobman.vikui.png"
     tar -C "$stage" -czf "$dist/$name.tar.gz" "$name"
     echo "$dist/$name.tar.gz"
     ;;

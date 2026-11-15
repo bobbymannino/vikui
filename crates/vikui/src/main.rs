@@ -19,6 +19,9 @@ use login_ui::Prompt;
 use projects_ui::{LoadProjects, ProjectsEvent, ProjectsView};
 use reminders::Source;
 
+/// The app's reverse-DNS identifier, shared with the macOS bundle and Linux desktop entry.
+const APP_ID: &str = "dev.bobman.vikui";
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -175,6 +178,8 @@ fn window_options(
             title: Some(title.into()),
             ..Default::default()
         }),
+        // Matches the Linux desktop entry, so the dock shows the app's name and icon.
+        app_id: Some(APP_ID.to_owned()),
         ..Default::default()
     }
 }
