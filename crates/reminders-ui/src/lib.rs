@@ -2,18 +2,24 @@
 //!
 //! The view does not fetch anything: the caller passes in the reminders (from one
 //! project, a filter, or search results) and can replace them later.
+//!
+//! Clicking a row (or pressing Enter on it) toggles a details side panel. The view only
+//! reserves the space and reports [`RemindersEvent::ShowDetails`]; the caller supplies
+//! the panel with [`RemindersView::set_details_panel`] and fills it in.
 
 mod reminders_table;
 
+use std::rc::Rc;
+
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::alert::Alert;
-use gpui_kit::component::table::{DataTable, TableState};
+use gpui_kit::component::table::{DataTable, TableEvent, TableState};
 use gpui_kit::component::{ActiveTheme as _, h_flex, v_flex};
 use gpui_kit::{
-    AnyWindowHandle, App, AppContext as _, Context, Entity, Focusable as _, FontWeight,
-    InteractiveElement as _, IntoElement, ParentElement as _, Render, Role, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Window, WindowOptions, div,
-    prelude::FluentBuilder as _,
+    AnyView, AnyWindowHandle, App, AppContext as _, Context, Entity, EventEmitter, Focusable as _,
+    FontWeight, InteractiveElement as _, IntoElement, KeyBinding, ParentElement as _, Render, Role,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
+    WindowOptions, div, prelude::FluentBuilder as _, px,
 };
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
@@ -21,12 +27,35 @@ use reminders::Reminder;
 
 use reminders_table::{ReminderRow, RemindersTable};
 
-/// A titled, sortable list of reminders.
+gpui_kit::actions!(reminders, [ToggleDetails]);
+
+const CONTEXT: &str = "Reminders";
+const DETAILS_WIDTH: f32 = 340.;
+
+/// Register the reminders view's key bindings. Call once at startup.
+pub fn init(cx: &mut App) {
+    cx.bind_keys([KeyBinding::new("enter", ToggleDetails, Some(CONTEXT))]);
+}
+
+/// Events for the app to act on.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RemindersEvent {
+    /// The details panel opened on, or moved to, this reminder; fill the panel in.
+    ShowDetails(Reminder),
+}
+
+/// A titled, sortable list of reminders with an optional details panel.
 pub struct RemindersView {
     title: SharedString,
     table: Entity<TableState<RemindersTable>>,
     summary: SharedString,
     error: Option<SharedString>,
+    /// What the rows were made from; rows refer to it by `order`.
+    reminders: Vec<Reminder>,
+    details_panel: Option<AnyView>,
+    /// `order` of the reminder the details panel is open on.
+    details_for: Option<usize>,
+    _table_events: Subscription,
 }
 
 impl RemindersView {
@@ -40,11 +69,34 @@ impl RemindersView {
     ) -> Self {
         let table = cx.new(|cx| TableState::new(RemindersTable::default(), window, cx));
         table.read(cx).focus_handle(cx).focus(window, cx);
+
+        let view = cx.entity().downgrade();
+        table.update(cx, |table, _| {
+            table
+                .delegate_mut()
+                .set_on_row_click(Rc::new(move |row_ix, _, cx| {
+                    view.update(cx, |this, cx| this.toggle_row(row_ix, cx)).ok();
+                }));
+        });
+        let table_events = cx.subscribe(&table, |this, _, event: &TableEvent, cx| match event {
+            // Clicks are handled by `toggle_row`; this follows keyboard selection while the
+            // panel is open.
+            TableEvent::SelectRow(row_ix) if this.details_for.is_some() => {
+                this.show_row(*row_ix, cx);
+            }
+            TableEvent::ClearSelection => this.hide_details(cx),
+            _ => {}
+        });
+
         let mut this = Self {
             title: title.into(),
             table,
             summary: SharedString::default(),
             error: None,
+            reminders: Vec::new(),
+            details_panel: None,
+            details_for: None,
+            _table_events: table_events,
         };
         match reminders {
             Some(reminders) => this.set_reminders(&reminders, None, cx),
@@ -75,12 +127,71 @@ impl RemindersView {
         self.summary = summary(set, upcoming, matched_tasks);
         let empty_message = empty_message(matched_tasks);
         self.error = None;
+        self.reminders = reminders.to_vec();
+        self.details_for = None;
         self.table.update(cx, |table, cx| {
             table.delegate_mut().set_empty_message(empty_message);
             table.delegate_mut().set_rows(rows);
             cx.notify();
         });
         cx.notify();
+    }
+
+    /// The view shown in the details panel; it stays hidden until a row is opened.
+    pub fn set_details_panel(&mut self, panel: AnyView, cx: &mut Context<Self>) {
+        self.details_panel = Some(panel);
+        cx.notify();
+    }
+
+    /// Close the details panel and return focus to the list.
+    pub fn close_details(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.hide_details(cx);
+        self.table.read(cx).focus_handle(cx).focus(window, cx);
+    }
+
+    fn hide_details(&mut self, cx: &mut Context<Self>) {
+        if self.details_for.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    fn order_of(&self, row_ix: usize, cx: &App) -> Option<usize> {
+        self.table
+            .read(cx)
+            .delegate()
+            .row(row_ix)
+            .map(|row| row.order)
+    }
+
+    /// Open the panel on the row, or close it if it is already open there.
+    fn toggle_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        let order = self.order_of(row_ix, cx);
+        if order.is_some() && order == self.details_for {
+            self.hide_details(cx);
+        } else {
+            self.show_row(row_ix, cx);
+        }
+    }
+
+    fn show_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        let Some(order) = self.order_of(row_ix, cx) else {
+            return;
+        };
+        if self.details_for == Some(order) {
+            return;
+        }
+        let Some(reminder) = self.reminders.get(order).cloned() else {
+            return;
+        };
+        self.details_for = Some(order);
+        cx.emit(RemindersEvent::ShowDetails(reminder));
+        cx.notify();
+    }
+
+    fn on_toggle_details(&mut self, _: &ToggleDetails, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(row_ix) = self.table.read(cx).selected_row() {
+            self.toggle_row(row_ix, cx);
+        }
     }
 
     /// Show why the reminders could not be loaded.
@@ -117,11 +228,19 @@ fn empty_message(matched_tasks: Option<usize>) -> SharedString {
     }
 }
 
+impl EventEmitter<RemindersEvent> for RemindersView {}
+
 impl Render for RemindersView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
+        let details = self
+            .details_panel
+            .clone()
+            .filter(|_| self.details_for.is_some());
         v_flex()
             .id("reminders")
+            .key_context(CONTEXT)
+            .on_action(cx.listener(Self::on_toggle_details))
             .size_full()
             .gap_4()
             .p_6()
@@ -159,11 +278,29 @@ impl Render for RemindersView {
                 )
             })
             .child(
-                div().flex_1().min_h_0().child(
-                    DataTable::new(&self.table)
-                        .stripe(true)
-                        .accessibility_label("Reminders"),
-                ),
+                h_flex()
+                    .flex_1()
+                    .min_h_0()
+                    .items_stretch()
+                    .child(
+                        div().flex_1().min_w_0().h_full().child(
+                            DataTable::new(&self.table)
+                                .stripe(true)
+                                .accessibility_label("Reminders"),
+                        ),
+                    )
+                    .when_some(details, |this, panel| {
+                        this.child(
+                            div()
+                                .w(px(DETAILS_WIDTH))
+                                .flex_none()
+                                .h_full()
+                                .ml_4()
+                                .border_l_1()
+                                .border_color(theme.border)
+                                .child(panel),
+                        )
+                    }),
             )
     }
 }
@@ -184,7 +321,9 @@ pub fn open(
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::test::{TestQueryExt as _, TestWindowExt as _};
+    use std::cell::RefCell;
+
+    use gpui_kit::test::{TestEventExt as _, TestQueryExt as _, TestWindowExt as _};
     use gpui_kit::{Bounds, Point, TestAppContext, WindowBounds, px, size};
 
     use super::*;
@@ -264,6 +403,87 @@ mod tests {
             );
         })
         .unwrap();
+    }
+
+    struct TestPanel;
+
+    impl Render for TestPanel {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .id("test-panel")
+                .aria_label("Test panel")
+                .child("Details")
+                .test_support()
+        }
+    }
+
+    #[gpui_kit::test]
+    fn clicking_a_row_toggles_the_details_panel(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let later = soon + jiff::SignedDuration::from_hours(24);
+        let second = Reminder {
+            task_id: 2,
+            ..reminder(later, "Call landlord")
+        };
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let reminders = vec![reminder(soon, "Pay rent"), second.clone()];
+            open(options(), "Reminders – Home", Some(reminders), cx).unwrap()
+        });
+        let shown = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let panel = cx.new(|_| TestPanel);
+            view.update(cx, |view, cx| view.set_details_panel(panel.into(), cx));
+            let shown = Rc::clone(&shown);
+            cx.subscribe(&view, move |_, RemindersEvent::ShowDetails(reminder), _| {
+                shown.borrow_mut().push(reminder.task_title.clone());
+            })
+            .detach();
+        });
+        let panel_visible = |cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.try_find_by_label("Test panel").is_some()
+            })
+            .unwrap()
+        };
+        assert!(!panel_visible(cx));
+
+        let click = |cx: &mut TestAppContext, row_ix: usize| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.click(("row", row_ix), cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        click(cx, 0);
+        assert!(panel_visible(cx));
+        click(cx, 1);
+        assert!(panel_visible(cx));
+        click(cx, 1);
+        assert!(!panel_visible(cx));
+        assert_eq!(*shown.borrow(), ["Pay rent", "Call landlord"]);
+
+        // Keyboard: Enter opens it on the selected row, Up follows, Escape closes.
+        let key = |cx: &mut TestAppContext, key: &str| {
+            cx.update_window(handle, |_, window, cx| {
+                window.key_down(key, false, cx);
+                window.key_up(key, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        key(cx, "enter");
+        assert!(panel_visible(cx));
+        key(cx, "up");
+        assert_eq!(
+            *shown.borrow(),
+            ["Pay rent", "Call landlord", "Call landlord", "Pay rent"]
+        );
+        key(cx, "escape");
+        assert!(!panel_visible(cx));
     }
 
     #[test]
