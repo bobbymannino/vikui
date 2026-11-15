@@ -1,7 +1,7 @@
 //! Opens a reminders window for a project, filter or search and fills it in.
 //!
 //! The window's details side panel is a [`ReminderDetailsView`], filled from the tasks
-//! loaded for the list. Marking a task done from the panel saves it here.
+//! loaded for the list. Marking a task done from the panel or the list saves it here.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -160,6 +160,31 @@ fn attach_details_panel(
     })
     .detach();
 
+    // Marking done from the list (keyboard) saves the same way as from the panel.
+    cx.subscribe(view, {
+        let targets = SaveTargets {
+            view: view.downgrade(),
+            details: details.downgrade(),
+            tasks: Rc::clone(&tasks),
+            shown: Rc::clone(&shown),
+        };
+        let session = Arc::clone(&session);
+        let on_session_expired = Rc::clone(&on_session_expired);
+        move |_, event, cx| {
+            if let RemindersEvent::SetDone { task_id, done } = *event {
+                save_done(
+                    targets.clone(),
+                    Arc::clone(&session),
+                    Rc::clone(&on_session_expired),
+                    task_id,
+                    done,
+                    cx,
+                );
+            }
+        }
+    })
+    .detach();
+
     let view = view.downgrade();
     let weak_details = details.downgrade();
     cx.subscribe(&details, move |_, event, cx| match *event {
@@ -194,6 +219,7 @@ fn attach_details_panel(
 }
 
 /// What a save updates when it finishes.
+#[derive(Clone)]
 struct SaveTargets {
     view: WeakEntity<RemindersView>,
     details: WeakEntity<ReminderDetailsView>,
