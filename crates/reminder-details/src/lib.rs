@@ -2,14 +2,19 @@
 //! task's other reminders. Built from data the caller already has; no fetching, no UI.
 
 use jiff::Timestamp;
+pub use reminders::Priority;
 use reminders::Reminder;
-use vikunja::Task;
+use vikunja::{Repeat, Task};
 
 /// A reminder together with the task it belongs to.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ReminderDetails {
     /// The reminder that was picked (or the task's entry, if it has no reminders).
     pub reminder: Reminder,
+    /// The title of the task's project, when known.
+    pub project: Option<String>,
+    /// How the task, and so its reminders, repeats.
+    pub repeat: Option<Repeat>,
     /// Plain text; empty when the task has no description.
     pub description: String,
     pub priority: Option<Priority>,
@@ -21,15 +26,18 @@ pub struct ReminderDetails {
 }
 
 impl ReminderDetails {
-    /// Details for `reminder`, which must belong to `task`.
+    /// Details for `reminder`, which must belong to `task`; `project` is the title of the
+    /// task's project, if the caller knows it.
     #[must_use]
-    pub fn new(reminder: &Reminder, task: &Task) -> Self {
+    pub fn new(reminder: &Reminder, task: &Task, project: Option<&str>) -> Self {
         let reminders = reminders::from_tasks(std::slice::from_ref(task))
             .into_iter()
             .filter(|reminder| reminder.is_set)
             .collect();
         Self {
             reminder: reminder.clone(),
+            project: project.map(str::to_owned),
+            repeat: task.repeat(),
             description: task.plain_description(),
             priority: Priority::from_level(task.priority),
             due: task.due_date,
@@ -46,42 +54,6 @@ impl ReminderDetails {
             .into_iter()
             .filter_map(|(label, at)| Some((label, at?)))
             .collect()
-    }
-}
-
-/// Vikunja's task priority levels.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
-pub enum Priority {
-    Low,
-    Medium,
-    High,
-    Urgent,
-    DoNow,
-}
-
-impl Priority {
-    /// `None` for `0` (unset) or levels Vikunja does not define.
-    #[must_use]
-    pub fn from_level(level: i64) -> Option<Self> {
-        Some(match level {
-            1 => Self::Low,
-            2 => Self::Medium,
-            3 => Self::High,
-            4 => Self::Urgent,
-            5 => Self::DoNow,
-            _ => return None,
-        })
-    }
-
-    #[must_use]
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Low => "Low",
-            Self::Medium => "Medium",
-            Self::High => "High",
-            Self::Urgent => "Urgent",
-            Self::DoNow => "Do now",
-        }
     }
 }
 
@@ -120,9 +92,11 @@ mod tests {
             ..Task::default()
         };
         let all = reminders::from_tasks(std::slice::from_ref(&task));
-        let details = ReminderDetails::new(&all[1], &task);
+        let details = ReminderDetails::new(&all[1], &task, Some("Home"));
         assert_eq!(details.reminder.at, Some(ts("2026-12-01T08:00:00Z")));
         assert_eq!(details.description, "Transfer & confirm");
+        assert_eq!(details.project.as_deref(), Some("Home"));
+        assert_eq!(details.repeat, None);
         assert_eq!(details.priority, Some(Priority::High));
         assert_eq!(
             details.dates(),
@@ -142,17 +116,29 @@ mod tests {
             ..Task::default()
         };
         let all = reminders::from_tasks(std::slice::from_ref(&task));
-        let details = ReminderDetails::new(&all[0], &task);
+        let details = ReminderDetails::new(&all[0], &task, None);
         assert!(!details.reminder.is_set);
         assert_eq!(details.reminders, []);
         assert_eq!(details.priority, None);
+        assert_eq!(details.project, None);
         assert_eq!(details.dates(), []);
     }
 
     #[test]
-    fn priority_levels() {
-        assert_eq!(Priority::from_level(0), None);
-        assert_eq!(Priority::from_level(5).map(Priority::label), Some("Do now"));
-        assert_eq!(Priority::from_level(9), None);
+    fn carries_the_task_repeat() {
+        let task = Task {
+            id: 1,
+            repeat_after: 86_400,
+            ..Task::default()
+        };
+        let all = reminders::from_tasks(std::slice::from_ref(&task));
+        let details = ReminderDetails::new(&all[0], &task, None);
+        assert_eq!(
+            details.repeat,
+            Some(Repeat::Every {
+                every_secs: 86_400,
+                from_done: false
+            })
+        );
     }
 }

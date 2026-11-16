@@ -66,15 +66,25 @@ impl Content {
                 Field::new("When", reminder.when(zone)),
                 Field::new("Schedule", reminder.schedule()),
                 Field::new("Status", reminder.status(now).label()),
+                Field::new(
+                    "Repeats",
+                    details
+                        .repeat
+                        .map_or_else(|| "No".to_owned(), reminders::describe_repeat),
+                ),
             ]
         } else {
             vec![Field::new("When", "No reminder set")]
         };
 
-        let mut task = vec![Field::new(
+        let mut task = Vec::new();
+        if let Some(project) = &details.project {
+            task.push(Field::new("Project", project.clone()));
+        }
+        task.push(Field::new(
             "Status",
             if reminder.task_done { "Done" } else { "Open" },
-        )];
+        ));
         if let Some(priority) = details.priority {
             task.push(Field::new("Priority", priority.label()));
         }
@@ -395,7 +405,7 @@ mod tests {
 
     fn details(task: &Task) -> ReminderDetails {
         let all = reminders::from_tasks(std::slice::from_ref(task));
-        ReminderDetails::new(&all[0], task)
+        ReminderDetails::new(&all[0], task, Some("Home"))
     }
 
     #[test]
@@ -408,11 +418,13 @@ mod tests {
                 Field::new("When", "Tue 1 Dec 2026, 08:00"),
                 Field::new("Schedule", "1 hour before due date"),
                 Field::new("Status", "Upcoming"),
+                Field::new("Repeats", "No"),
             ]
         );
         assert_eq!(
             content.task,
             [
+                Field::new("Project", "Home"),
                 Field::new("Status", "Open"),
                 Field::new("Priority", "Urgent"),
                 Field::new("Due", "Tue 1 Dec 2026, 09:00"),
@@ -422,6 +434,16 @@ mod tests {
         assert_eq!(
             content.reminders,
             ["Tue 1 Dec 2026, 08:00 · 1 hour before due date"]
+        );
+
+        let weekly = Task {
+            repeat_after: 7 * 86_400,
+            ..task()
+        };
+        let content = Content::new(&details(&weekly), now, &TimeZone::UTC);
+        assert_eq!(
+            content.reminder.last(),
+            Some(&Field::new("Repeats", "Every week"))
         );
 
         let plain = Task {
@@ -466,6 +488,8 @@ mod tests {
             window.render_frame(cx);
             window.find_by_label("Reminder details");
             window.find_by_label("Priority: Urgent");
+            window.find_by_label("Project: Home");
+            window.find_by_label("Repeats: No");
             window.find_by_label("Schedule: 1 hour before due date");
             window.find_by_label("Transfer & confirm");
             window.find_by_label("Close details");

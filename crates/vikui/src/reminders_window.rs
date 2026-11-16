@@ -15,12 +15,27 @@ use reminder_details_ui::{ReminderDetailsEvent, ReminderDetailsView};
 use reminders::Reminder;
 use reminders::Source;
 use reminders_ui::{RemindersEvent, RemindersView};
-use vikunja::Task;
+use vikunja::{Client, Task};
 
 /// Open a window listing the reminders from `source`, loading them in the background.
 ///
-/// Tasks loaded for one window, by id.
-type Tasks = Rc<RefCell<HashMap<i64, Task>>>;
+/// What one window has loaded, shared by its list and details panel.
+type Tasks = Rc<RefCell<Loaded>>;
+
+/// Tasks by id, and project titles by id for naming each task's project.
+#[derive(Default)]
+struct Loaded {
+    tasks: HashMap<i64, Task>,
+    projects: HashMap<i64, String>,
+}
+
+impl Loaded {
+    /// Details for `reminder`, which must belong to `task`.
+    fn details(&self, reminder: &Reminder, task: &Task) -> ReminderDetails {
+        let project = self.projects.get(&task.project_id).map(String::as_str);
+        ReminderDetails::new(reminder, task, project)
+    }
+}
 
 /// Runs when the server rejects the session for good.
 type OnSessionExpired = Rc<dyn Fn(&mut App)>;
@@ -68,6 +83,13 @@ pub fn open(
     .detach();
 }
 
+/// One finished load: the list's reminders, their tasks and project titles by id.
+struct Load {
+    reminders: Vec<Reminder>,
+    tasks: Vec<Task>,
+    projects: HashMap<i64, String>,
+}
+
 /// Loads a window's tasks into its list, on open and on every refresh.
 struct Loader {
     source: Source,
@@ -82,17 +104,26 @@ impl Loader {
         let source = self.source.clone();
         let session = Arc::clone(&self.session);
         let load = cx.background_spawn(async move {
-            session
-                .call(|client, token| source.tasks(client, token))
-                .map(|tasks| {
-                    let reminders = reminders::from_tasks(&tasks);
-                    log::debug!(
-                        "{source:?}: {} tasks, {} reminders",
-                        tasks.len(),
-                        reminders.len()
-                    );
-                    (reminders, tasks)
-                })
+            let tasks = session.call(|client, token| source.tasks(client, token))?;
+            // Only names projects in the details panel, so the list still shows without it.
+            let projects = session
+                .call(Client::projects)
+                .inspect_err(|err| log::warn!("failed to load project names: {err:#}"))
+                .unwrap_or_default()
+                .into_iter()
+                .map(|project| (project.id, project.title))
+                .collect();
+            let reminders = reminders::from_tasks(&tasks);
+            log::debug!(
+                "{source:?}: {} tasks, {} reminders",
+                tasks.len(),
+                reminders.len()
+            );
+            Ok(Load {
+                reminders,
+                tasks,
+                projects,
+            })
         });
         let this = Rc::clone(self);
         cx.spawn(async move |cx| {
@@ -102,15 +133,22 @@ impl Loader {
         .detach();
     }
 
-    fn finish(&self, result: Result<(Vec<Reminder>, Vec<Task>), vikunja::Error>, cx: &mut App) {
+    fn finish(&self, result: Result<Load, vikunja::Error>, cx: &mut App) {
         let Some(view) = self.view.upgrade() else {
             return;
         };
         match result {
-            Ok((reminders, loaded)) => {
-                let count = loaded.len();
+            Ok(Load {
+                reminders,
+                tasks,
+                projects,
+            }) => {
+                let count = tasks.len();
                 // Before `set_reminders`, which may ask for the open reminder's details.
-                *self.tasks.borrow_mut() = loaded.into_iter().map(|task| (task.id, task)).collect();
+                *self.tasks.borrow_mut() = Loaded {
+                    tasks: tasks.into_iter().map(|task| (task.id, task)).collect(),
+                    projects,
+                };
                 view.update(cx, |view, cx| {
                     view.set_reminders(&reminders, Some(count), cx);
                 });
@@ -149,12 +187,14 @@ fn attach_details_panel(
             let RemindersEvent::ShowDetails(reminder) = event else {
                 return;
             };
-            let Some(task) = tasks.borrow().get(&reminder.task_id).cloned() else {
+            let loaded = tasks.borrow();
+            let Some(task) = loaded.tasks.get(&reminder.task_id) else {
                 log::warn!("no loaded task {} for reminder details", reminder.task_id);
                 return;
             };
+            let info = loaded.details(reminder, task);
+            drop(loaded);
             *shown.borrow_mut() = Some(reminder.clone());
-            let info = ReminderDetails::new(reminder, &task);
             details.update(cx, |details, cx| details.set_details(&info, cx));
         }
     })
@@ -271,13 +311,13 @@ impl SaveTargets {
             self.details.upgrade(),
         ) {
             reminder.task_done = done;
-            let info = ReminderDetails::new(reminder, &task);
+            let info = self.tasks.borrow().details(reminder, &task);
             details.update(cx, |details, cx| {
                 if details.task_id() == Some(id) {
                     details.set_details(&info, cx);
                 }
             });
         }
-        self.tasks.borrow_mut().insert(id, task);
+        self.tasks.borrow_mut().tasks.insert(id, task);
     }
 }
