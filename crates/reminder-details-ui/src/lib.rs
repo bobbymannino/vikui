@@ -71,12 +71,20 @@ impl Content {
             vec![Field::new("When", "No reminder set")]
         };
 
-        let mut task = vec![Field::new(
+        let mut task = Vec::new();
+        if let Some(project) = &details.project {
+            task.push(Field::new("Project", project.clone()));
+        }
+        task.push(Field::new(
             "Status",
             if reminder.task_done { "Done" } else { "Open" },
-        )];
+        ));
         if let Some(priority) = details.priority {
             task.push(Field::new("Priority", priority.label()));
+        }
+        // On the task, not the reminder: a task repeats whether or not it has reminders.
+        if let Some(repeat) = details.repeat {
+            task.push(Field::new("Repeating", reminders::describe_repeat(repeat)));
         }
         task.extend(
             details
@@ -395,7 +403,7 @@ mod tests {
 
     fn details(task: &Task) -> ReminderDetails {
         let all = reminders::from_tasks(std::slice::from_ref(task));
-        ReminderDetails::new(&all[0], task)
+        ReminderDetails::new(&all[0], task, Some("Home"))
     }
 
     #[test]
@@ -413,6 +421,7 @@ mod tests {
         assert_eq!(
             content.task,
             [
+                Field::new("Project", "Home"),
                 Field::new("Status", "Open"),
                 Field::new("Priority", "Urgent"),
                 Field::new("Due", "Tue 1 Dec 2026, 09:00"),
@@ -422,6 +431,28 @@ mod tests {
         assert_eq!(
             content.reminders,
             ["Tue 1 Dec 2026, 08:00 · 1 hour before due date"]
+        );
+
+        let weekly = Task {
+            repeat_after: 7 * 86_400,
+            ..task()
+        };
+        let content = Content::new(&details(&weekly), now, &TimeZone::UTC);
+        assert!(
+            content
+                .task
+                .contains(&Field::new("Repeating", "every 1 week"))
+        );
+        // Shown for a repeating task without any reminders too.
+        let weekly_plain = Task {
+            reminders: vec![],
+            ..weekly
+        };
+        let content = Content::new(&details(&weekly_plain), now, &TimeZone::UTC);
+        assert!(
+            content
+                .task
+                .contains(&Field::new("Repeating", "every 1 week"))
         );
 
         let plain = Task {
@@ -466,6 +497,7 @@ mod tests {
             window.render_frame(cx);
             window.find_by_label("Reminder details");
             window.find_by_label("Priority: Urgent");
+            window.find_by_label("Project: Home");
             window.find_by_label("Schedule: 1 hour before due date");
             window.find_by_label("Transfer & confirm");
             window.find_by_label("Close details");

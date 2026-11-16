@@ -457,6 +457,9 @@ mod tests {
             task_id: 1,
             task_title: title.into(),
             task_identifier: "HOME-1".into(),
+            task_priority: None,
+            task_due: None,
+            task_labels: Vec::new(),
             project_id: 1,
             task_done: false,
             is_set: true,
@@ -478,8 +481,20 @@ mod tests {
         let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
         let handle = cx.update(|cx| {
             gpui_kit::init(cx);
-            let reminders = vec![reminder(soon, "Pay rent")];
-            open(options(), "Reminders – Home", Some(reminders), cx)
+            let labelled = Reminder {
+                task_labels: vec![
+                    reminders::TaskLabel {
+                        title: "Bills".into(),
+                        rgb: Some(0x19_73_ff),
+                    },
+                    reminders::TaskLabel {
+                        title: "Home".into(),
+                        rgb: None,
+                    },
+                ],
+                ..reminder(soon, "Pay rent")
+            };
+            open(options(), "Reminders – Home", Some(vec![labelled]), cx)
                 .unwrap()
                 .0
         });
@@ -487,8 +502,8 @@ mod tests {
             window.render_frame(cx);
             window.find_by_label("Reminders");
             window.find_by_label("Pay rent");
-            window.find_by_label("1 hour before due date");
-            window.find_by_label("Upcoming");
+            window.find_by_label("HOME-1");
+            window.find_by_label("Bills, Home");
         })
         .unwrap();
     }
@@ -624,20 +639,20 @@ mod tests {
                 view.set_task_done(1, true, cx);
             });
         });
-        let status = |cx: &mut TestAppContext| {
+        let inactive = |cx: &mut TestAppContext| {
             cx.update(|cx| {
                 let table = view.read(cx).table.read(cx);
-                table.delegate().row(0).map(|row| row.status.clone())
+                table.delegate().row(0).map(|row| row.inactive)
             })
         };
-        assert_eq!(status(cx).as_deref(), Some("Task done"));
+        assert_eq!(inactive(cx), Some(true));
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             window.find_by_label("Test panel");
         })
         .unwrap();
         cx.update(|cx| view.update(cx, |view, cx| view.set_task_done(1, false, cx)));
-        assert_eq!(status(cx).as_deref(), Some("Upcoming"));
+        assert_eq!(inactive(cx), Some(false));
     }
 
     #[gpui_kit::test]
@@ -793,7 +808,6 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             window.find_by_label("Buy milk");
-            window.find_by_label("No reminder");
         })
         .unwrap();
     }

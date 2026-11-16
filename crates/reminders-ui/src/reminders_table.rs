@@ -5,27 +5,32 @@ use std::rc::Rc;
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
+use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::{
-    App, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, Role,
+    App, Context, Div, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,
     prelude::FluentBuilder as _,
 };
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
-use reminders::Reminder;
+use reminders::{Priority, Reminder};
 
 /// One row, formatted off the render path.
 #[derive(Clone, Debug)]
 pub struct ReminderRow {
-    at: Option<Timestamp>,
-    pub when: SharedString,
-    pub task: SharedString,
     pub identifier: SharedString,
-    pub schedule: SharedString,
-    pub status: SharedString,
-    /// Fired already, not scheduled, or its task is done: drawn muted (and says so in
-    /// `status`). Tasks without a reminder are not muted unless done.
+    pub task: SharedString,
+    priority: Option<Priority>,
+    pub priority_label: SharedString,
+    due_at: Option<Timestamp>,
+    pub due: SharedString,
+    /// The labels as one line: the cell's accessible name and sort key.
+    pub labels: SharedString,
+    /// The labels as drawn, one tag each.
+    label_tags: Vec<LabelTag>,
+    /// Fired already, not scheduled, or its task is done: drawn muted (the details panel
+    /// says which). Tasks without a reminder are not muted unless done.
     pub inactive: bool,
     /// A real reminder, not a task listed without one.
     pub is_set: bool,
@@ -39,39 +44,77 @@ impl ReminderRow {
         reminders
             .iter()
             .enumerate()
-            .map(|(order, reminder)| {
-                let status = reminder.status(now);
-                Self {
-                    at: reminder.at,
-                    when: reminder.when(zone).into(),
-                    task: reminder.task_title.clone().into(),
-                    identifier: reminder.task_identifier.clone().into(),
-                    schedule: reminder.schedule().into(),
-                    status: status.label().into(),
-                    inactive: status.is_inactive(),
-                    is_set: reminder.is_set,
-                    order,
-                }
+            .map(|(order, reminder)| Self {
+                identifier: reminder.task_reference().into(),
+                task: reminder.task_title.clone().into(),
+                priority: reminder.task_priority,
+                priority_label: reminder.task_priority.map_or("", Priority::label).into(),
+                due_at: reminder.task_due,
+                due: reminder.due(zone).into(),
+                labels: reminder.labels().into(),
+                label_tags: reminder
+                    .task_labels
+                    .iter()
+                    .map(|label| LabelTag {
+                        title: label.title.clone().into(),
+                        rgb: label.rgb,
+                    })
+                    .collect(),
+                inactive: reminder.status(now).is_inactive(),
+                is_set: reminder.is_set,
+                order,
             })
             .collect()
     }
 }
 
+/// One label, ready to draw as a tag.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LabelTag {
+    title: SharedString,
+    /// `0xRRGGBB`; `None` draws the theme's neutral tag.
+    rgb: Option<u32>,
+}
+
+impl LabelTag {
+    /// A faint fill of the label's colour with the colour as text, its lightness pushed
+    /// away from the background so the text stays readable in light and dark themes.
+    fn render(&self, cx: &App) -> Tag {
+        let tag = match self.rgb {
+            Some(rgb) => {
+                let color: Hsla = gpui_kit::rgb(rgb).into();
+                let fill = color.opacity(0.18);
+                let text = Hsla {
+                    l: if cx.theme().is_dark() {
+                        color.l.max(0.72)
+                    } else {
+                        color.l.min(0.38)
+                    },
+                    ..color
+                };
+                Tag::custom(fill, text, fill)
+            }
+            None => Tag::secondary(),
+        };
+        tag.child(self.title.clone())
+    }
+}
+
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Col {
-    When,
-    Task,
     Identifier,
-    Schedule,
-    Status,
+    Task,
+    Priority,
+    Due,
+    Labels,
 }
 
 const COLUMNS: [Col; 5] = [
-    Col::When,
-    Col::Task,
     Col::Identifier,
-    Col::Schedule,
-    Col::Status,
+    Col::Task,
+    Col::Priority,
+    Col::Due,
+    Col::Labels,
 ];
 
 impl Col {
@@ -81,11 +124,11 @@ impl Col {
 
     fn text(self, row: &ReminderRow) -> &SharedString {
         match self {
-            Self::When => &row.when,
-            Self::Task => &row.task,
             Self::Identifier => &row.identifier,
-            Self::Schedule => &row.schedule,
-            Self::Status => &row.status,
+            Self::Task => &row.task,
+            Self::Priority => &row.priority_label,
+            Self::Due => &row.due,
+            Self::Labels => &row.labels,
         }
     }
 }
@@ -157,16 +200,20 @@ impl RemindersTable {
 }
 
 fn compare(col: Col, a: &ReminderRow, b: &ReminderRow) -> Ordering {
-    // Chronological, not by the formatted text.
-    let primary = if col == Col::When {
-        // Unscheduled reminders after scheduled ones.
-        (a.at.is_none(), a.at).cmp(&(b.at.is_none(), b.at))
-    } else {
-        let (a_text, b_text) = (col.text(a), col.text(b));
-        a_text
-            .is_empty()
-            .cmp(&b_text.is_empty())
-            .then_with(|| a_text.to_lowercase().cmp(&b_text.to_lowercase()))
+    // Unset values after set ones; priority by level and due date chronologically,
+    // not by the formatted text.
+    let primary = match col {
+        Col::Priority => {
+            (a.priority.is_none(), a.priority).cmp(&(b.priority.is_none(), b.priority))
+        }
+        Col::Due => (a.due_at.is_none(), a.due_at).cmp(&(b.due_at.is_none(), b.due_at)),
+        Col::Identifier | Col::Task | Col::Labels => {
+            let (a_text, b_text) = (col.text(a), col.text(b));
+            a_text
+                .is_empty()
+                .cmp(&b_text.is_empty())
+                .then_with(|| a_text.to_lowercase().cmp(&b_text.to_lowercase()))
+        }
     };
     primary.then_with(|| a.order.cmp(&b.order))
 }
@@ -182,11 +229,11 @@ impl TableDelegate for RemindersTable {
 
     fn column(&self, col_ix: usize, _: &App) -> Column {
         let column = match Col::at(col_ix) {
-            Some(Col::When) => Column::new("when", "When").width(200.),
-            Some(Col::Task) => Column::new("task", "Task").width(300.),
             Some(Col::Identifier) => Column::new("identifier", "Task ID").width(110.),
-            Some(Col::Schedule) => Column::new("schedule", "Schedule").width(220.),
-            Some(Col::Status) => Column::new("status", "Status").width(110.),
+            Some(Col::Task) => Column::new("task", "Task").width(340.),
+            Some(Col::Priority) => Column::new("priority", "Priority").width(110.),
+            Some(Col::Due) => Column::new("due", "Due").width(200.),
+            Some(Col::Labels) => Column::new("labels", "Labels").width(240.),
             None => return Column::default(),
         };
         let sort = match self.sort {
@@ -228,8 +275,20 @@ impl TableDelegate for RemindersTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        let row = self.rows.get(row_ix);
+        let inactive = row.is_some_and(|row| row.inactive);
+        if Col::at(col_ix) == Some(Col::Labels) {
+            let tags = row.map_or(&[][..], |row| row.label_tags.as_slice());
+            return h_flex()
+                .w_full()
+                .gap_1()
+                .overflow_hidden()
+                // Muted rows fade their tags rather than recolouring them.
+                .when(inactive, |cell| cell.opacity(0.6))
+                .children(tags.iter().map(|tag| tag.render(cx)))
+                .into_any_element();
+        }
         let text = self.cell(row_ix, col_ix).cloned().unwrap_or_default();
-        let inactive = self.rows.get(row_ix).is_some_and(|row| row.inactive);
         div()
             .w_full()
             .truncate()
@@ -237,6 +296,7 @@ impl TableDelegate for RemindersTable {
                 cell.text_color(cx.theme().muted_foreground)
             })
             .child(text)
+            .into_any_element()
     }
 
     fn cell_label(&self, row_ix: usize, col_ix: usize, _: &App) -> Option<SharedString> {
@@ -280,10 +340,78 @@ mod tests {
             task_id: 1,
             task_title: title.into(),
             task_identifier: String::new(),
+            task_priority: None,
+            task_due: None,
+            task_labels: Vec::new(),
             project_id: 1,
             task_done: done,
             is_set: true,
         }
+    }
+
+    fn titles(table: &RemindersTable) -> Vec<&str> {
+        table.rows().iter().map(|row| row.task.as_ref()).collect()
+    }
+
+    #[test]
+    fn formats_the_task_columns() {
+        let now: Timestamp = "2026-11-14T12:00:00Z".parse().unwrap();
+        let rows = ReminderRow::from_reminders(
+            &[
+                Reminder {
+                    task_identifier: "HOME-7".into(),
+                    task_priority: Some(Priority::Urgent),
+                    task_due: Some("2026-12-01T09:00:00Z".parse().unwrap()),
+                    task_labels: vec![
+                        reminders::TaskLabel {
+                            title: "Bills".into(),
+                            rgb: Some(0xff_00_00),
+                        },
+                        reminders::TaskLabel {
+                            title: "Home".into(),
+                            rgb: None,
+                        },
+                    ],
+                    ..reminder("2026-12-01T08:00:00Z", "Pay rent", false)
+                },
+                Reminder {
+                    task_id: 9,
+                    ..reminder("2026-12-01T08:00:00Z", "Plain", false)
+                },
+            ],
+            now,
+            &TimeZone::UTC,
+        );
+        let cells = |row: &ReminderRow| {
+            COLUMNS
+                .iter()
+                .map(|col| col.text(row).to_string())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            cells(&rows[0]),
+            [
+                "HOME-7",
+                "Pay rent",
+                "Urgent",
+                "Tue 1 Dec 2026, 09:00",
+                "Bills, Home"
+            ]
+        );
+        assert_eq!(cells(&rows[1]), ["#9", "Plain", "", "", ""]);
+        assert_eq!(
+            rows[0].label_tags,
+            [
+                LabelTag {
+                    title: "Bills".into(),
+                    rgb: Some(0xff_00_00)
+                },
+                LabelTag {
+                    title: "Home".into(),
+                    rgb: None
+                },
+            ]
+        );
     }
 
     #[test]
@@ -297,39 +425,14 @@ mod tests {
         };
         let rows =
             ReminderRow::from_reminders(&[without(false), without(true)], now, &TimeZone::UTC);
-        assert_eq!(rows[0].when, "No reminder");
-        assert_eq!(rows[0].schedule, "");
-        assert_eq!(rows[0].status, "Open");
         assert!(!rows[0].inactive);
         assert!(!rows[0].is_set);
-        assert_eq!(rows[1].status, "Task done");
         assert!(rows[1].inactive);
     }
 
     #[test]
-    fn formats_time_status_and_schedule() {
+    fn past_unscheduled_and_done_reminders_are_muted() {
         let now: Timestamp = "2026-11-14T12:00:00Z".parse().unwrap();
-        let rows = ReminderRow::from_reminders(
-            &[
-                reminder("2026-11-13T09:30:00Z", "Past one", false),
-                reminder("2026-12-01T09:05:00Z", "Future one", false),
-                reminder("2026-12-02T09:00:00Z", "Finished", true),
-            ],
-            now,
-            &TimeZone::UTC,
-        );
-        assert_eq!(rows[0].when, "Fri 13 Nov 2026, 09:30");
-        assert_eq!(rows[0].status, "Past");
-        assert!(rows[0].inactive);
-        assert_eq!(rows[1].status, "Upcoming");
-        assert!(!rows[1].inactive);
-        assert_eq!(rows[1].schedule, "Fixed time");
-        assert_eq!(rows[2].status, "Task done");
-    }
-
-    #[test]
-    fn unscheduled_reminders_say_why_and_sort_last() {
-        let now: Timestamp = "2026-01-01T00:00:00Z".parse().unwrap();
         let unscheduled = Reminder {
             at: None,
             relative: Some(vikunja::RelativeReminder {
@@ -338,42 +441,60 @@ mod tests {
             }),
             ..reminder("2026-01-02T00:00:00Z", "No due date", false)
         };
-        let mut table = RemindersTable::default();
-        table.set_rows(ReminderRow::from_reminders(
+        let rows = ReminderRow::from_reminders(
             &[
+                reminder("2026-11-13T09:30:00Z", "Past one", false),
+                reminder("2026-12-01T09:05:00Z", "Future one", false),
+                reminder("2026-12-02T09:00:00Z", "Finished", true),
                 unscheduled,
-                reminder("2026-12-01T09:00:00Z", "Scheduled", false),
             ],
             now,
             &TimeZone::UTC,
-        ));
-        let row = &table.rows()[0];
-        assert_eq!(row.when, "Due date not set");
-        assert_eq!(row.status, "Not scheduled");
-        assert!(row.inactive);
-
-        table.sort = Some((Col::When, ColumnSort::Ascending));
-        table.apply_sort();
-        let titles: Vec<_> = table.rows().iter().map(|r| r.task.as_ref()).collect();
-        assert_eq!(titles, ["Scheduled", "No due date"]);
+        );
+        let inactive: Vec<_> = rows.iter().map(|row| row.inactive).collect();
+        // Past, upcoming, task done, not scheduled.
+        assert_eq!(inactive, [true, false, true, true]);
     }
 
     #[test]
-    fn when_sorts_chronologically() {
+    fn priority_and_due_sort_by_value_with_unset_last() {
         let now: Timestamp = "2026-01-01T00:00:00Z".parse().unwrap();
+        let task = |title, priority, due: Option<&str>| Reminder {
+            task_priority: priority,
+            task_due: due.map(|due| due.parse().unwrap()),
+            ..reminder("2026-12-01T09:00:00Z", title, false)
+        };
         let mut table = RemindersTable::default();
-        // "Tue 1 Dec" sorts before "Wed 2 Sep" as text; chronologically it is later.
         table.set_rows(ReminderRow::from_reminders(
             &[
-                reminder("2026-12-01T09:00:00Z", "December", false),
-                reminder("2026-09-02T09:00:00Z", "September", false),
+                // "Tue 1 Dec" sorts before "Wed 2 Sep" as text; chronologically it is later.
+                task(
+                    "December",
+                    Some(Priority::Low),
+                    Some("2026-12-01T09:00:00Z"),
+                ),
+                task("Unset", None, None),
+                task(
+                    "September",
+                    Some(Priority::DoNow),
+                    Some("2026-09-02T09:00:00Z"),
+                ),
             ],
             now,
             &TimeZone::UTC,
         ));
-        table.sort = Some((Col::When, ColumnSort::Ascending));
+
+        table.sort = Some((Col::Due, ColumnSort::Ascending));
         table.apply_sort();
-        let titles: Vec<_> = table.rows().iter().map(|r| r.task.as_ref()).collect();
-        assert_eq!(titles, ["September", "December"]);
+        assert_eq!(titles(&table), ["September", "December", "Unset"]);
+
+        // "Do now" sorts before "Low" as text; by level it is higher.
+        table.sort = Some((Col::Priority, ColumnSort::Ascending));
+        table.apply_sort();
+        assert_eq!(titles(&table), ["December", "September", "Unset"]);
+
+        table.sort = None;
+        table.apply_sort();
+        assert_eq!(titles(&table), ["December", "Unset", "September"]);
     }
 }

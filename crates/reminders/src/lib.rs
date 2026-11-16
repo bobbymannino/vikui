@@ -6,7 +6,7 @@
 
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
-use vikunja::{Client, Error, RelativeReminder, RelativeTo, Task, TaskQuery, Token};
+use vikunja::{Client, Error, RelativeReminder, RelativeTo, Repeat, Task, TaskQuery, Token};
 
 /// One reminder, flattened out of its task, or a task that has no reminder set.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -19,6 +19,10 @@ pub struct Reminder {
     pub task_title: String,
     /// e.g. `HOME-12`; may be empty.
     pub task_identifier: String,
+    pub task_priority: Option<Priority>,
+    pub task_due: Option<Timestamp>,
+    /// The task's labels, in its order.
+    pub task_labels: Vec<TaskLabel>,
     pub project_id: i64,
     pub task_done: bool,
     /// `false` for a task listed without any reminder set on it.
@@ -26,6 +30,33 @@ pub struct Reminder {
 }
 
 impl Reminder {
+    /// The task's identifier (`HOME-12`), or `#12` when it has none.
+    #[must_use]
+    pub fn task_reference(&self) -> String {
+        if self.task_identifier.is_empty() {
+            format!("#{}", self.task_id)
+        } else {
+            self.task_identifier.clone()
+        }
+    }
+
+    /// The task's due date in `zone`, or empty when it has none.
+    #[must_use]
+    pub fn due(&self, zone: &TimeZone) -> String {
+        self.task_due
+            .map_or_else(String::new, |due| format_time(due, zone))
+    }
+
+    /// The task's labels as one line, e.g. "Bills, Home"; empty when it has none.
+    #[must_use]
+    pub fn labels(&self) -> String {
+        self.task_labels
+            .iter()
+            .map(|label| label.title.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
+    }
+
     /// "1 hour before due date", or `None` for reminders set at a fixed time.
     #[must_use]
     pub fn relative_description(&self) -> Option<String> {
@@ -53,6 +84,68 @@ impl Reminder {
             Some(RelativeTo::End) => "End date not set",
             None => "No time set",
         })
+    }
+}
+
+/// A label on a reminder's task.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskLabel {
+    pub title: String,
+    /// `0xRRGGBB`, or `None` when the label has no colour.
+    pub rgb: Option<u32>,
+}
+
+/// Vikunja's task priority levels.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Priority {
+    Low,
+    Medium,
+    High,
+    Urgent,
+    DoNow,
+}
+
+impl Priority {
+    /// `None` for `0` (unset) or levels Vikunja does not define.
+    #[must_use]
+    pub fn from_level(level: i64) -> Option<Self> {
+        Some(match level {
+            1 => Self::Low,
+            2 => Self::Medium,
+            3 => Self::High,
+            4 => Self::Urgent,
+            5 => Self::DoNow,
+            _ => return None,
+        })
+    }
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Low => "Low",
+            Self::Medium => "Medium",
+            Self::High => "High",
+            Self::Urgent => "Urgent",
+            Self::DoNow => "Do now",
+        }
+    }
+}
+
+/// "every 1 week", "every month", "every 2 days after it is done".
+#[must_use]
+pub fn describe_repeat(repeat: Repeat) -> String {
+    match repeat {
+        Repeat::Monthly => "every month".to_owned(),
+        Repeat::Every {
+            every_secs,
+            from_done,
+        } => {
+            let mut text = format!("every {}", humanize(every_secs));
+            if from_done {
+                text.push_str(" after it is done");
+            }
+            text
+        }
     }
 }
 
@@ -147,6 +240,16 @@ pub fn from_tasks(tasks: &[Task]) -> Vec<Reminder> {
                 task_id: task.id,
                 task_title: task.title.clone(),
                 task_identifier: task.identifier.clone(),
+                task_priority: Priority::from_level(task.priority),
+                task_due: task.due_date,
+                task_labels: task
+                    .labels
+                    .iter()
+                    .map(|label| TaskLabel {
+                        title: label.title.clone(),
+                        rgb: label.rgb(),
+                    })
+                    .collect(),
                 project_id: task.project_id,
                 task_done: task.done,
                 is_set,
@@ -364,6 +467,58 @@ mod tests {
         assert_eq!(reminders[0].schedule(), "Fixed time");
         assert_eq!(without.when(&TimeZone::UTC), "No reminder");
         assert_eq!(without.schedule(), "");
+    }
+
+    #[test]
+    fn carries_task_priority_labels_and_reference() {
+        let tasks = [Task {
+            priority: 4,
+            labels: vec![
+                vikunja::Label {
+                    id: 1,
+                    title: "Bills".into(),
+                    hex_color: "ff0000".into(),
+                },
+                vikunja::Label {
+                    id: 2,
+                    title: "Home".into(),
+                    hex_color: String::new(),
+                },
+            ],
+            ..task(12, "Pay rent", vec![])
+        }];
+        let reminder = &from_tasks(&tasks)[0];
+        assert_eq!(reminder.task_priority, Some(Priority::Urgent));
+        assert_eq!(reminder.labels(), "Bills, Home");
+        assert_eq!(reminder.task_labels[0].rgb, Some(0xff_00_00));
+        assert_eq!(reminder.task_labels[1].rgb, None);
+        assert_eq!(reminder.due(&TimeZone::UTC), "");
+        let due = Reminder {
+            task_due: Some(ts("2026-12-01T09:00:00Z")),
+            ..reminder.clone()
+        };
+        assert_eq!(due.due(&TimeZone::UTC), "Tue 1 Dec 2026, 09:00");
+        assert_eq!(reminder.task_reference(), "#12");
+        let named = Reminder {
+            task_identifier: "HOME-3".into(),
+            ..reminder.clone()
+        };
+        assert_eq!(named.task_reference(), "HOME-3");
+        assert_eq!(Priority::from_level(0), None);
+    }
+
+    #[test]
+    fn describes_repeats() {
+        let every = |every_secs, from_done| {
+            describe_repeat(Repeat::Every {
+                every_secs,
+                from_done,
+            })
+        };
+        assert_eq!(every(7 * 86_400, false), "every 1 week");
+        assert_eq!(every(2 * 86_400, true), "every 2 days after it is done");
+        assert_eq!(every(5_400, false), "every 1 hour 30 minutes");
+        assert_eq!(describe_repeat(Repeat::Monthly), "every month");
     }
 
     #[test]
