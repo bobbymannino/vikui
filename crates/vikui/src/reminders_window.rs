@@ -254,6 +254,7 @@ fn attach_details_panel(
                 cx,
             );
         }
+        ReminderDetailsEvent::OpenInWindow { .. } => {}
     })
     .detach();
 }
