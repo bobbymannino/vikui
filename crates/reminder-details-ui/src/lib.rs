@@ -66,12 +66,6 @@ impl Content {
                 Field::new("When", reminder.when(zone)),
                 Field::new("Schedule", reminder.schedule()),
                 Field::new("Status", reminder.status(now).label()),
-                Field::new(
-                    "Repeats",
-                    details
-                        .repeat
-                        .map_or_else(|| "No".to_owned(), reminders::describe_repeat),
-                ),
             ]
         } else {
             vec![Field::new("When", "No reminder set")]
@@ -87,6 +81,10 @@ impl Content {
         ));
         if let Some(priority) = details.priority {
             task.push(Field::new("Priority", priority.label()));
+        }
+        // On the task, not the reminder: a task repeats whether or not it has reminders.
+        if let Some(repeat) = details.repeat {
+            task.push(Field::new("Repeating", reminders::describe_repeat(repeat)));
         }
         task.extend(
             details
@@ -418,7 +416,6 @@ mod tests {
                 Field::new("When", "Tue 1 Dec 2026, 08:00"),
                 Field::new("Schedule", "1 hour before due date"),
                 Field::new("Status", "Upcoming"),
-                Field::new("Repeats", "No"),
             ]
         );
         assert_eq!(
@@ -441,9 +438,21 @@ mod tests {
             ..task()
         };
         let content = Content::new(&details(&weekly), now, &TimeZone::UTC);
-        assert_eq!(
-            content.reminder.last(),
-            Some(&Field::new("Repeats", "Every week"))
+        assert!(
+            content
+                .task
+                .contains(&Field::new("Repeating", "every 1 week"))
+        );
+        // Shown for a repeating task without any reminders too.
+        let weekly_plain = Task {
+            reminders: vec![],
+            ..weekly
+        };
+        let content = Content::new(&details(&weekly_plain), now, &TimeZone::UTC);
+        assert!(
+            content
+                .task
+                .contains(&Field::new("Repeating", "every 1 week"))
         );
 
         let plain = Task {
@@ -489,7 +498,6 @@ mod tests {
             window.find_by_label("Reminder details");
             window.find_by_label("Priority: Urgent");
             window.find_by_label("Project: Home");
-            window.find_by_label("Repeats: No");
             window.find_by_label("Schedule: 1 hour before due date");
             window.find_by_label("Transfer & confirm");
             window.find_by_label("Close details");

@@ -131,22 +131,16 @@ impl Priority {
     }
 }
 
-/// "Every week", "Every month", "Every 2 days after it is done".
+/// "every 1 week", "every month", "every 2 days after it is done".
 #[must_use]
 pub fn describe_repeat(repeat: Repeat) -> String {
     match repeat {
-        Repeat::Monthly => "Every month".to_owned(),
+        Repeat::Monthly => "every month".to_owned(),
         Repeat::Every {
             every_secs,
             from_done,
         } => {
-            let interval = humanize(every_secs);
-            // "Every 1 week" reads better as "Every week"; "1 hour 30 minutes" keeps its 1.
-            let interval = interval
-                .strip_prefix("1 ")
-                .filter(|unit| !unit.contains(' '))
-                .unwrap_or(&interval);
-            let mut text = format!("Every {interval}");
+            let mut text = format!("every {}", humanize(every_secs));
             if from_done {
                 text.push_str(" after it is done");
             }
@@ -521,10 +515,10 @@ mod tests {
                 from_done,
             })
         };
-        assert_eq!(every(7 * 86_400, false), "Every week");
-        assert_eq!(every(2 * 86_400, true), "Every 2 days after it is done");
-        assert_eq!(every(5_400, false), "Every 1 hour 30 minutes");
-        assert_eq!(describe_repeat(Repeat::Monthly), "Every month");
+        assert_eq!(every(7 * 86_400, false), "every 1 week");
+        assert_eq!(every(2 * 86_400, true), "every 2 days after it is done");
+        assert_eq!(every(5_400, false), "every 1 hour 30 minutes");
+        assert_eq!(describe_repeat(Repeat::Monthly), "every month");
     }
 
     #[test]
