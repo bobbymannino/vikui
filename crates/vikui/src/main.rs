@@ -3,6 +3,7 @@
 
 mod app_actions;
 mod app_menu;
+mod app_preferences;
 mod reminders_window;
 mod settings_window;
 
@@ -44,6 +45,11 @@ fn main() {
         cx.background_spawn(async { updater::clean_up() }).detach();
 
         open_initial_window(cx);
+        app_preferences::load(cx, |preferences, cx| {
+            if preferences.check_for_updates_on_open {
+                settings_window::check_on_launch(cx);
+            }
+        });
     });
 }
 

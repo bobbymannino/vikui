@@ -8152,6 +8152,7 @@ dependencies = [
  "login",
  "login-ui",
  "overview-ui",
+ "preferences",
  "projects-ui",
  "reminder-details",
  "reminder-details-ui",
