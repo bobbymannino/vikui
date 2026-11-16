@@ -54,7 +54,7 @@ fn open_view(cx: &mut App) -> Option<(Entity<SettingsView>, bool)> {
     }
     let title = format!("Settings – {}", crate::APP_NAME);
     let options = crate::window_options(title, 480., 360., cx);
-    let (handle, view) = settings_ui::open(options, about(), cx)
+    let (handle, view) = settings_ui::open(options, about(), true, cx)
         .inspect_err(|err| log::error!("failed to open settings window: {err:#}"))
         .ok()?;
     cx.set_global(SettingsWindow(Some((handle, view.downgrade()))));
@@ -83,6 +83,7 @@ impl Updates {
         cx.subscribe(view, move |_, event, cx| match event {
             SettingsEvent::CheckForUpdates => this.check(cx),
             SettingsEvent::InstallUpdate => this.install(cx),
+            SettingsEvent::SetCheckForUpdatesOnOpen(_) => {}
         })
         .detach();
     }

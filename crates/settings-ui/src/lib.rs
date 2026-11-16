@@ -6,6 +6,7 @@
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::switch::Switch;
 use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
 use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, Context, Entity, EventEmitter, FontWeight,
@@ -73,6 +74,8 @@ pub enum SettingsEvent {
     CheckForUpdates,
     /// Install the available version and restart.
     InstallUpdate,
+    /// The user turned checking for updates when the app opens on or off; save it.
+    SetCheckForUpdatesOnOpen(bool),
 }
 
 /// The settings view.
@@ -81,12 +84,14 @@ pub struct SettingsView {
     version_label: SharedString,
     update: UpdateStatus,
     update_message: SharedString,
+    check_on_open: bool,
 }
 
 impl EventEmitter<SettingsEvent> for SettingsView {}
 
 impl SettingsView {
-    pub fn new(about: About) -> Self {
+    /// `check_on_open` is the saved "Check for updates on open" preference.
+    pub fn new(about: About, check_on_open: bool) -> Self {
         let version_label = format!("Version {}", about.version).into();
         let update = UpdateStatus::default();
         Self {
@@ -94,6 +99,20 @@ impl SettingsView {
             version_label,
             update_message: update.message(),
             update,
+            check_on_open,
+        }
+    }
+
+    #[must_use]
+    pub fn check_for_updates_on_open(&self) -> bool {
+        self.check_on_open
+    }
+
+    fn toggle_check_on_open(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.check_on_open != on {
+            self.check_on_open = on;
+            cx.emit(SettingsEvent::SetCheckForUpdatesOnOpen(on));
+            cx.notify();
         }
     }
 
@@ -157,6 +176,15 @@ impl SettingsView {
                         })),
                 ),
             )
+            .child(
+                Switch::new("check-updates-on-open")
+                    .checked(self.check_on_open)
+                    .label("Check for updates on open")
+                    .accessibility_label("Check for updates on open")
+                    .on_change(cx.listener(|this, on: &bool, _, cx| {
+                        this.toggle_check_on_open(*on, cx);
+                    })),
+            )
     }
 }
 
@@ -206,12 +234,16 @@ impl Render for SettingsView {
 }
 
 /// Open the settings window.
+/// Open the settings window; see [`SettingsView::new`] for `check_on_open`.
 pub fn open(
     options: WindowOptions,
     about: About,
+    check_on_open: bool,
     cx: &mut App,
 ) -> gpui_kit::Result<(AnyWindowHandle, Entity<SettingsView>)> {
-    gpui_kit::open_window(options, cx, |_, cx| cx.new(|_| SettingsView::new(about)))
+    gpui_kit::open_window(options, cx, |_, cx| {
+        cx.new(|_| SettingsView::new(about, check_on_open))
+    })
 }
 
 #[cfg(test)]
@@ -230,7 +262,7 @@ mod tests {
         };
         let handle = cx.update(|cx| {
             gpui_kit::init(cx);
-            open(WindowOptions::default(), about, cx).unwrap().0
+            open(WindowOptions::default(), about, true, cx).unwrap().0
         });
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
@@ -257,7 +289,7 @@ mod tests {
         };
         let (handle, view) = cx.update(|cx| {
             gpui_kit::init(cx);
-            open(WindowOptions::default(), about, cx).unwrap()
+            open(WindowOptions::default(), about, true, cx).unwrap()
         });
         let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         cx.update(|cx| {
@@ -323,5 +355,48 @@ mod tests {
         );
         assert!(has_label(cx, "Couldn't update: no network"));
         assert!(has_label(cx, "Check for Updates"));
+    }
+
+    #[gpui_kit::test]
+    fn toggles_checking_for_updates_on_open(cx: &mut TestAppContext) {
+        let about = About {
+            name: "Vikui".into(),
+            version: "1.2.3".into(),
+            repository: "https://example.com/vikui".into(),
+        };
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            open(WindowOptions::default(), about, false, cx).unwrap()
+        });
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = std::rc::Rc::clone(&events);
+            cx.subscribe(&view, move |_, event, _| events.borrow_mut().push(*event))
+                .detach();
+        });
+        let toggle = |cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.find_by_label("Check for updates on open");
+                window.click("check-updates-on-open", cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        let on =
+            |cx: &mut TestAppContext| cx.update(|cx| view.read(cx).check_for_updates_on_open());
+
+        assert!(!on(cx));
+        toggle(cx);
+        assert!(on(cx));
+        toggle(cx);
+        assert!(!on(cx));
+        assert_eq!(
+            *events.borrow(),
+            [
+                SettingsEvent::SetCheckForUpdatesOnOpen(true),
+                SettingsEvent::SetCheckForUpdatesOnOpen(false)
+            ]
+        );
     }
 }
