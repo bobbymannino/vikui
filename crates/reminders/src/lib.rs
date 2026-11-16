@@ -339,6 +339,42 @@ impl Search {
     }
 }
 
+/// Which tasks to list by whether they are done.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StatusFilter {
+    #[default]
+    All,
+    NotDone,
+    Done,
+    /// Not done and due before now.
+    Overdue,
+}
+
+impl StatusFilter {
+    pub const ALL: [Self; 4] = [Self::All, Self::NotDone, Self::Done, Self::Overdue];
+
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::All => "All",
+            Self::NotDone => "Not done",
+            Self::Done => "Done",
+            Self::Overdue => "Overdue",
+        }
+    }
+
+    /// Whether `reminder`'s task has this status at `now`.
+    #[must_use]
+    pub fn matches(self, reminder: &Reminder, now: Timestamp) -> bool {
+        match self {
+            Self::All => true,
+            Self::NotDone => !reminder.task_done,
+            Self::Done => reminder.task_done,
+            Self::Overdue => !reminder.task_done && reminder.task_due.is_some_and(|due| due < now),
+        }
+    }
+}
+
 /// Which labels a reminder's task must all have; none selected matches everything.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct LabelFilter {
@@ -422,7 +458,7 @@ impl Source {
                 format!("Reminders – {title}")
             }
             Self::Filter(filter) => format!("Reminders – filter “{filter}”"),
-            Self::Search(text) => format!("Reminders – search “{text}”"),
+            Self::Search(text) => format!("Search – “{text}”"),
         }
     }
 
@@ -722,6 +758,30 @@ mod tests {
         let mut reminder = from_tasks(&[task(1, "Pay rent", Vec::new())]).remove(0);
         reminder.task_labels = labels.to_vec();
         reminder
+    }
+
+    #[test]
+    fn status_filter_matches_done_and_overdue_tasks() {
+        let now = ts("2026-12-01T12:00:00Z");
+        let entry = |done: bool, due: Option<&str>| {
+            let mut task = task(1, "Pay rent", Vec::new());
+            task.done = done;
+            task.due_date = due.map(ts);
+            from_tasks(&[task]).remove(0)
+        };
+        let late = entry(false, Some("2026-12-01T11:59:00Z"));
+        let later = entry(false, Some("2026-12-02T09:00:00Z"));
+        let undated = entry(false, None);
+        let done_late = entry(true, Some("2026-11-30T09:00:00Z"));
+        let all = [&late, &later, &undated, &done_late];
+        let matching = |filter: StatusFilter| -> Vec<bool> {
+            all.iter().map(|r| filter.matches(r, now)).collect()
+        };
+        assert_eq!(StatusFilter::default(), StatusFilter::All);
+        assert_eq!(matching(StatusFilter::All), [true, true, true, true]);
+        assert_eq!(matching(StatusFilter::NotDone), [true, true, true, false]);
+        assert_eq!(matching(StatusFilter::Done), [false, false, false, true]);
+        assert_eq!(matching(StatusFilter::Overdue), [true, false, false, false]);
     }
 
     #[test]

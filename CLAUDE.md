@@ -9,10 +9,10 @@ Vikui: a cross-platform GPUI desktop client for Vikunja (see `README.md`).
 - `crates/vikunja`: blocking Vikunja REST client, no UI.
 - `crates/login`: sign-in and keychain session storage, no UI.
 - `crates/login-ui`: sign-in window; reports success via callback, never opens other windows itself.
-- `crates/overview-ui`: main window shell; hosts a content view passed in by the app.
+- `crates/overview-ui`: main window shell; hosts a content view passed in by the app and reports searches of every project via events.
 - `crates/projects-ui`: project list; reports opening a project and session expiry via events.
 - `crates/reminders`: turns tasks into a sorted reminder list, no UI.
-- `crates/reminders-ui`: reminders window; lists the reminders it is given, never fetches. Clicking a row toggles a details panel supplied by the app.
+- `crates/reminders-ui`: reminders and search window; lists the reminders it is given, never fetches. Clicking a row toggles a details panel supplied by the app.
 - `crates/new-reminder`: builds a new reminder (a task with a reminder at its due date) and creates it, or diffs an edited task and saves it, no UI.
 - `crates/new-reminder-ui`: new reminder and edit task window; reports the filled-in form via events, never saves it itself.
 - `crates/reminder-details`: builds the details of one reminder and its task, no UI.

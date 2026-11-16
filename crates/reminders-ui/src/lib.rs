@@ -17,9 +17,12 @@
 //!
 //! The search field (Cmd/Ctrl+F) filters the list by task title, ignoring case, spaces
 //! and punctuation (see [`reminders::Search`]). Enter moves to the results; Escape clears.
+//! A search window ([`open_search`]) instead holds the server search the list shows:
+//! Enter reports [`RemindersEvent::Search`] and the caller lists the new results.
 //!
-//! Below it, one chip per label on the listed tasks filters to tasks with every selected
-//! label (see [`reminders::LabelFilter`]).
+//! Below it, a status filter lists all tasks, only those done or not done, or only
+//! overdue ones (see [`reminders::StatusFilter`]), and one chip per label on the listed
+//! tasks filters to tasks with every selected label (see [`reminders::LabelFilter`]).
 //!
 //! Pressing T (as in Vikunja's web app) reports [`RemindersEvent::SetDone`] for the
 //! selected row's task; the caller saves it and answers with
@@ -30,9 +33,11 @@ mod reminders_table;
 
 use std::rc::Rc;
 
-use gpui_kit::base::TestSupportExt as _;
+use gpui_kit::base::{Selectable as _, TestSupportExt as _};
 use gpui_kit::component::alert::Alert;
-use gpui_kit::component::button::{Button, ButtonVariants as _, Toggle, ToggleVariants as _};
+use gpui_kit::component::button::{
+    Button, ButtonGroup, ButtonVariants as _, Toggle, ToggleVariants as _,
+};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::table::{DataTable, TableEvent, TableState};
 use gpui_kit::component::{
@@ -47,7 +52,7 @@ use gpui_kit::{
 };
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
-use reminders::{LabelFilter, Reminder, Search};
+use reminders::{LabelFilter, Reminder, Search, StatusFilter};
 
 use label_tag::LabelTag;
 use reminders_table::{ReminderRow, RemindersTable, RowCommand};
@@ -124,6 +129,19 @@ pub enum RemindersEvent {
     EditTask { task_id: i64 },
     /// The user asked to add a new reminder.
     NewReminder,
+    /// In a search window: the user asked to search every project for this text (never
+    /// blank). Answer with [`RemindersView::set_reminders`] or [`RemindersView::set_error`].
+    Search(SharedString),
+}
+
+/// What the search field does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+enum SearchMode {
+    /// Filters the listed reminders as the user types.
+    #[default]
+    List,
+    /// Holds the server search the list shows; Enter searches again.
+    Server,
 }
 
 /// A titled, sortable list of reminders with an optional details panel.
@@ -131,6 +149,7 @@ pub struct RemindersView {
     title: SharedString,
     table: Entity<TableState<RemindersTable>>,
     search: Entity<InputState>,
+    search_mode: SearchMode,
     /// What the search field currently filters by.
     query: Search,
     /// The search field's text, for the empty-list message.
@@ -139,6 +158,7 @@ pub struct RemindersView {
     labels: Vec<LabelTag>,
     /// The labels a task must all have to be listed.
     label_filter: LabelFilter,
+    status_filter: StatusFilter,
     summary: SharedString,
     error: Option<SharedString>,
     /// Waiting for reminders (the first load or a refresh).
@@ -204,14 +224,21 @@ impl RemindersView {
             &search,
             window,
             |this, search, event: &InputEvent, window, cx| match event {
-                InputEvent::Change => {
+                InputEvent::Change if this.search_mode == SearchMode::List => {
                     let text = search.read(cx).value();
                     this.set_search(text, cx);
                 }
                 InputEvent::PressEnter { .. } => {
+                    if this.search_mode == SearchMode::Server {
+                        let text = search.read(cx).value();
+                        if !this.search_server(text.trim(), cx) {
+                            return;
+                        }
+                    }
                     this.table.read(cx).focus_handle(cx).focus(window, cx);
                 }
-                InputEvent::Focus | InputEvent::Blur => {}
+                // A server search only runs on Enter.
+                InputEvent::Change | InputEvent::Focus | InputEvent::Blur => {}
             },
         );
 
@@ -219,9 +246,11 @@ impl RemindersView {
             title: title.into(),
             table,
             search,
+            search_mode: SearchMode::List,
             query: Search::default(),
             labels: Vec::new(),
             label_filter: LabelFilter::default(),
+            status_filter: StatusFilter::default(),
             query_text: SharedString::default(),
             summary: SharedString::default(),
             error: None,
@@ -282,6 +311,33 @@ impl RemindersView {
         }
     }
 
+    /// Show the server search for `text`: the search field holds it (instead of
+    /// filtering the list) and the list waits for its results, passed to
+    /// [`Self::set_reminders`].
+    pub fn set_server_search(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
+        self.search_mode = SearchMode::Server;
+        self.title = search_title(text);
+        self.loading = true;
+        let text = SharedString::from(text.to_owned());
+        self.search.update(cx, |search, cx| {
+            search.set_placeholder("Search all tasks", window, cx);
+            search.set_value(text, window, cx);
+        });
+        cx.notify();
+    }
+
+    /// Show the results for a new server search, `text`. Returns whether it was asked for.
+    fn search_server(&mut self, text: &str, cx: &mut Context<Self>) -> bool {
+        if text.is_empty() || self.loading {
+            return false;
+        }
+        self.loading = true;
+        self.title = search_title(text);
+        cx.emit(RemindersEvent::Search(text.to_owned().into()));
+        cx.notify();
+        true
+    }
+
     /// Filter the list by `text`; see [`reminders::Search`].
     fn set_search(&mut self, text: SharedString, cx: &mut Context<Self>) {
         let query = Search::new(&text);
@@ -296,6 +352,13 @@ impl RemindersView {
     fn toggle_label(&mut self, label_id: i64, cx: &mut Context<Self>) {
         self.label_filter.toggle(label_id);
         self.refresh_rows(cx);
+    }
+
+    fn set_status_filter(&mut self, status: StatusFilter, cx: &mut Context<Self>) {
+        if status != self.status_filter {
+            self.status_filter = status;
+            self.refresh_rows(cx);
+        }
     }
 
     fn clear_labels(&mut self, cx: &mut Context<Self>) {
@@ -335,8 +398,8 @@ impl RemindersView {
     }
 
     fn refresh_rows(&mut self, cx: &mut Context<Self>) {
-        let mut rows =
-            ReminderRow::from_reminders(&self.reminders, Timestamp::now(), &TimeZone::system());
+        let now = Timestamp::now();
+        let mut rows = ReminderRow::from_reminders(&self.reminders, now, &TimeZone::system());
         let set = rows.iter().filter(|row| row.is_set).count();
         let upcoming = rows
             .iter()
@@ -345,22 +408,40 @@ impl RemindersView {
         let total = rows.len();
         rows.retain(|row| {
             self.query.matches_normalized(&row.search_key)
-                && self
-                    .reminders
-                    .get(row.order)
-                    .is_some_and(|reminder| self.label_filter.matches(reminder))
+                && self.reminders.get(row.order).is_some_and(|reminder| {
+                    self.label_filter.matches(reminder) && self.status_filter.matches(reminder, now)
+                })
         });
         let mut summary = summary(set, upcoming, self.matched_tasks);
         let query = self.query_text.trim();
-        let empty_message = match (self.query.is_empty(), self.label_filter.is_empty()) {
-            (true, true) => empty_message(self.matched_tasks),
-            (false, true) => format!("Nothing matches “{query}”.").into(),
-            (true, false) => "No reminders have all the selected labels.".into(),
-            (false, false) => {
-                format!("Nothing matches “{query}” with all the selected labels.").into()
+        let empty_message = if self.status_filter == StatusFilter::All {
+            match (self.query.is_empty(), self.label_filter.is_empty()) {
+                (true, true) => empty_message(self.matched_tasks),
+                (false, true) => format!("Nothing matches “{query}”.").into(),
+                (true, false) => "No reminders have all the selected labels.".into(),
+                (false, false) => {
+                    format!("Nothing matches “{query}” with all the selected labels.").into()
+                }
             }
+        } else {
+            let status = self.status_filter.label().to_lowercase();
+            // e.g. "No overdue tasks matching “rent” with all the selected labels."
+            let search = if self.query.is_empty() {
+                String::new()
+            } else {
+                format!(" matching “{query}”")
+            };
+            let labels = if self.label_filter.is_empty() {
+                ""
+            } else {
+                " with all the selected labels"
+            };
+            format!("No {status} tasks{search}{labels}.").into()
         };
-        if !self.query.is_empty() || !self.label_filter.is_empty() {
+        if !self.query.is_empty()
+            || !self.label_filter.is_empty()
+            || self.status_filter != StatusFilter::All
+        {
             summary = format!("{summary} · {} of {total} shown", rows.len()).into();
         }
         self.summary = summary;
@@ -544,6 +625,7 @@ impl EventEmitter<RemindersEvent> for RemindersView {}
 
 impl Render for RemindersView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let status_filter = self.render_status_filter(cx);
         let label_filter = (!self.labels.is_empty()).then(|| self.render_label_filter(cx));
         let theme = cx.theme();
         let details = self
@@ -585,7 +667,10 @@ impl Render for RemindersView {
                     .child(
                         Input::new(&self.search)
                             .id("search-reminders")
-                            .aria_label("Search reminders")
+                            .aria_label(match self.search_mode {
+                                SearchMode::List => "Search reminders",
+                                SearchMode::Server => "Search all tasks",
+                            })
                             .prefix(Icon::new(IconName::Search).text_color(theme.muted_foreground))
                             .cleanable(true)
                             .w(px(SEARCH_WIDTH)),
@@ -617,7 +702,14 @@ impl Render for RemindersView {
                             })),
                     ),
             )
-            .children(label_filter)
+            .child(
+                h_flex()
+                    .flex_wrap()
+                    .gap_3()
+                    .items_center()
+                    .child(status_filter)
+                    .children(label_filter),
+            )
             .when_some(self.error.clone(), |this, message| {
                 this.child(
                     // `Alert` has no accessible name of its own; announce the message.
@@ -661,6 +753,34 @@ impl Render for RemindersView {
 }
 
 impl RemindersView {
+    /// One button per status; the selected one is pressed.
+    fn render_status_filter(&self, cx: &mut Context<Self>) -> AnyElement {
+        div()
+            .id("status-filter")
+            .role(Role::Group)
+            .aria_label("Filter by status")
+            .child(
+                ButtonGroup::new("status-filter-buttons")
+                    .outline()
+                    .small()
+                    .children(StatusFilter::ALL.iter().enumerate().map(|(ix, status)| {
+                        Button::new(("status-filter", ix))
+                            .label(status.label())
+                            .accessibility_label(format!("Show {}", status.label().to_lowercase()))
+                            .selected(*status == self.status_filter)
+                    }))
+                    .on_click(cx.listener(|this, clicked: &Vec<usize>, _, cx| {
+                        if let Some(status) =
+                            clicked.first().and_then(|ix| StatusFilter::ALL.get(*ix))
+                        {
+                            this.set_status_filter(*status, cx);
+                        }
+                    })),
+            )
+            .test_support()
+            .into_any_element()
+    }
+
     /// One toggle chip per label, and a button to clear the selection.
     fn render_label_filter(&self, cx: &mut Context<Self>) -> AnyElement {
         h_flex()
@@ -695,6 +815,28 @@ impl RemindersView {
             .test_support()
             .into_any_element()
     }
+}
+
+/// The heading for the results of searching for `text`.
+fn search_title(text: &str) -> SharedString {
+    format!("Search – “{text}”").into()
+}
+
+/// Open a search window for the tasks matching `text` in every project, loading until
+/// [`RemindersView::set_reminders`] is called. Its search field holds `text`; changing
+/// it and pressing Enter reports [`RemindersEvent::Search`].
+pub fn open_search(
+    options: WindowOptions,
+    text: &str,
+    cx: &mut App,
+) -> gpui_kit::Result<(AnyWindowHandle, Entity<RemindersView>)> {
+    gpui_kit::open_window(options, cx, |window, cx| {
+        cx.new(|cx| {
+            let mut view = RemindersView::new(search_title(text), None, window, cx);
+            view.set_server_search(text, window, cx);
+            view
+        })
+    })
 }
 
 /// Open a reminders window; see [`RemindersView::new`] for `reminders`.
@@ -1153,6 +1295,154 @@ mod tests {
         assert!(has_label(cx, "Test panel"));
         search(cx, "pay");
         assert!(!has_label(cx, "Test panel"));
+    }
+
+    #[gpui_kit::test]
+    fn status_filter_shows_done_not_done_or_overdue_tasks(cx: &mut TestAppContext) {
+        let now = Timestamp::now();
+        let hours = |h: i64| now + jiff::SignedDuration::from_hours(h);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let reminders = vec![
+                Reminder {
+                    task_due: Some(hours(-2)),
+                    ..reminder(hours(-3), "Late")
+                },
+                Reminder {
+                    task_id: 2,
+                    task_due: Some(hours(48)),
+                    ..reminder(hours(24), "Later")
+                },
+                Reminder {
+                    task_id: 3,
+                    task_due: Some(hours(-2)),
+                    task_done: true,
+                    ..reminder(hours(-3), "Paid")
+                },
+            ];
+            open(options(), "Reminders – Home", Some(reminders), cx).unwrap()
+        });
+        let titles = |cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                let table = view.read(cx).table.read(cx);
+                let mut titles: Vec<String> = (0..)
+                    .map_while(|ix| table.delegate().row(ix).map(|row| row.task.to_string()))
+                    .collect();
+                titles.sort();
+                titles
+            })
+        };
+        // The buttons, by index: All, Not done, Done, Overdue.
+        let show = |cx: &mut TestAppContext, label: &'static str, ix: usize| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.find_by_label("Filter by status");
+                window.find_by_label(label);
+                window.click(ElementId::from(("status-filter", ix)), cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        assert_eq!(titles(cx), ["Late", "Later", "Paid"]);
+
+        show(cx, "Show overdue", 3);
+        assert_eq!(titles(cx), ["Late"]);
+        assert!(cx.update(|cx| view.read(cx).summary.ends_with("· 1 of 3 shown")));
+        show(cx, "Show done", 2);
+        assert_eq!(titles(cx), ["Paid"]);
+        show(cx, "Show not done", 1);
+        assert_eq!(titles(cx), ["Late", "Later"]);
+
+        // With a search too, the empty list says which status it looked for.
+        let text = SharedString::from("zzz");
+        cx.update(|cx| view.update(cx, |view, cx| view.set_search(text, cx)));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find_by_label("No not done tasks matching “zzz”.");
+        })
+        .unwrap();
+        let text = SharedString::default();
+        cx.update(|cx| view.update(cx, |view, cx| view.set_search(text, cx)));
+
+        show(cx, "Show all", 0);
+        assert_eq!(titles(cx), ["Late", "Later", "Paid"]);
+    }
+
+    #[gpui_kit::test]
+    fn search_window_searches_the_server_on_enter(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            open_search(options(), "rent", cx).unwrap()
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = Rc::clone(&events);
+            cx.subscribe(&view, move |_, event: &RemindersEvent, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        let has_label = |cx: &mut TestAppContext, label: &str| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.try_find_by_label(label).is_some()
+            })
+            .unwrap()
+        };
+        let results = vec![
+            reminder(soon, "Pay rent"),
+            Reminder {
+                task_id: 2,
+                ..reminder(soon, "Rent car")
+            },
+        ];
+        cx.update(|cx| view.update(cx, |view, cx| view.set_reminders(&results, Some(2), cx)));
+        assert_eq!(
+            cx.update(|cx| view.read(cx).title.clone()),
+            "Search – “rent”"
+        );
+        assert!(has_label(cx, "Search all tasks"));
+
+        let enter = |text: &'static str, cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, cx| {
+                window.key_down("secondary-f", false, cx);
+                let search = view.read(cx).search.clone();
+                search.update(cx, |search, cx| search.set_value(text, window, cx));
+                window.key_down("enter", false, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        // Typing doesn't filter the results: they are the server's.
+        enter("car", cx);
+        let shown = cx.update(|cx| view.read(cx).table.read(cx).delegate().row(1).is_some());
+        assert!(shown, "both results stay listed");
+        assert_eq!(*events.borrow(), [RemindersEvent::Search("car".into())]);
+        assert_eq!(
+            cx.update(|cx| view.read(cx).title.clone()),
+            "Search – “car”"
+        );
+
+        // A blank search, or one while the last is loading, is ignored.
+        enter("  ", cx);
+        cx.update(|cx| {
+            view.update(cx, |view, cx| {
+                view.set_reminders(&results[1..], Some(1), cx);
+            });
+        });
+        enter("  ", cx);
+        enter(" boat ", cx);
+        enter("bike", cx);
+        assert_eq!(
+            *events.borrow(),
+            [
+                RemindersEvent::Search("car".into()),
+                RemindersEvent::Search("boat".into())
+            ]
+        );
     }
 
     #[gpui_kit::test]
