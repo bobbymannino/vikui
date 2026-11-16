@@ -233,6 +233,7 @@ fn attach_details_panel(
     let shown: Rc<RefCell<Option<Reminder>>> = Rc::default();
 
     // Marking done from the list, the panel or a task window all save the same way.
+    let server = session.server();
     let set_done: SetDone = {
         let targets = SaveTargets {
             view: view.downgrade(),
@@ -254,6 +255,7 @@ fn attach_details_panel(
     let open_task = {
         let tasks = Rc::clone(&tasks);
         let set_done = Rc::clone(&set_done);
+        let server = server.clone();
         move |reminder: &Reminder, cx: &mut App| {
             let loaded = tasks.borrow();
             let Some(task) = loaded.tasks.get(&reminder.task_id) else {
@@ -261,7 +263,7 @@ fn attach_details_panel(
             };
             let info = loaded.details(reminder, task);
             drop(loaded);
-            task_window::open(reminder, &info, Rc::clone(&set_done), cx);
+            task_window::open(reminder, &info, server.clone(), Rc::clone(&set_done), cx);
         }
     };
 
@@ -271,6 +273,7 @@ fn attach_details_panel(
         let shown = Rc::clone(&shown);
         let set_done = Rc::clone(&set_done);
         let open_task = open_task.clone();
+        let server = server.clone();
         move |_, event, cx| match event {
             RemindersEvent::ShowDetails(reminder) => {
                 let loaded = tasks.borrow();
@@ -285,6 +288,9 @@ fn attach_details_panel(
             }
             RemindersEvent::SetDone { task_id, done } => set_done(*task_id, *done, cx),
             RemindersEvent::OpenTask(reminder) => open_task(reminder, cx),
+            RemindersEvent::OpenInBrowser { task_id } => {
+                task_window::open_in_browser(&server, *task_id, cx);
+            }
             RemindersEvent::Refresh => {}
         }
     })
@@ -303,6 +309,9 @@ fn attach_details_panel(
                 .ok();
         }
         ReminderDetailsEvent::SetDone { task_id, done } => set_done(task_id, done, cx),
+        ReminderDetailsEvent::OpenInBrowser { task_id } => {
+            task_window::open_in_browser(&server, task_id, cx);
+        }
         ReminderDetailsEvent::OpenInWindow { task_id } => {
             let reminder = shown
                 .borrow()

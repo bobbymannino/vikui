@@ -2,7 +2,7 @@
 
 use std::sync::{Mutex, MutexGuard, PoisonError};
 
-use vikunja::{Auth, Client, LoginRequest, Token};
+use vikunja::{Auth, Client, LoginRequest, ServerUrl, Token};
 
 use crate::credentials::{self, Credentials};
 
@@ -24,6 +24,12 @@ impl Session {
             client: Client::new(credentials.server.clone()),
             credentials: Mutex::new(credentials),
         }
+    }
+
+    /// The server this session signs in to.
+    #[must_use]
+    pub fn server(&self) -> ServerUrl {
+        self.lock().server.clone()
     }
 
     /// A copy of the current credentials, e.g. to pre-fill the sign-in form.

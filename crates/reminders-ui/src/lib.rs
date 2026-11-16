@@ -4,7 +4,8 @@
 //! project, a filter, or search results) and can replace them later.
 //!
 //! Double-clicking a row (or pressing Cmd/Ctrl+Enter on it) reports
-//! [`RemindersEvent::OpenTask`], to open its task in a window of its own.
+//! [`RemindersEvent::OpenTask`], to open its task in a window of its own. Cmd/Ctrl+O
+//! reports [`RemindersEvent::OpenInBrowser`]. Each row's context menu offers both.
 //!
 //! Clicking a row (or pressing Enter on it) toggles a details side panel. The view only
 //! reserves the space and reports [`RemindersEvent::ShowDetails`]; the caller supplies
@@ -40,11 +41,18 @@ use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use reminders::{Reminder, Search};
 
-use reminders_table::{ReminderRow, RemindersTable};
+use reminders_table::{ReminderRow, RemindersTable, RowCommand};
 
 gpui_kit::actions!(
     reminders,
-    [ToggleDetails, ToggleDone, Refresh, FocusSearch, OpenTask]
+    [
+        ToggleDetails,
+        ToggleDone,
+        Refresh,
+        FocusSearch,
+        OpenTask,
+        OpenInBrowser
+    ]
 );
 
 const CONTEXT: &str = "Reminders";
@@ -75,16 +83,15 @@ pub fn init(cx: &mut App) {
     let list_context = KeyBindingContextPredicate::parse(LIST_CONTEXT)
         .ok()
         .map(Rc::new);
-    match KeyBinding::load(
-        "secondary-enter",
-        Box::new(OpenTask),
-        list_context,
-        false,
-        None,
-        cx,
-    ) {
-        Ok(binding) => cx.bind_keys([binding]),
-        Err(err) => log::error!("invalid open task key binding: {err}"),
+    let list_bindings: [(&str, Box<dyn gpui_kit::Action>); 2] = [
+        ("secondary-enter", Box::new(OpenTask)),
+        ("secondary-o", Box::new(OpenInBrowser)),
+    ];
+    for (keystrokes, action) in list_bindings {
+        match KeyBinding::load(keystrokes, action, list_context.clone(), false, None, cx) {
+            Ok(binding) => cx.bind_keys([binding]),
+            Err(err) => log::error!("invalid key binding {keystrokes}: {err}"),
+        }
     }
 }
 
@@ -100,6 +107,8 @@ pub enum RemindersEvent {
     SetDone { task_id: i64, done: bool },
     /// The user asked to open this reminder's task in a window of its own.
     OpenTask(Reminder),
+    /// The user asked to open this task's page in the web browser.
+    OpenInBrowser { task_id: i64 },
 }
 
 /// A titled, sortable list of reminders with an optional details panel.
@@ -139,10 +148,20 @@ impl RemindersView {
 
         let view = cx.entity().downgrade();
         table.update(cx, |table, _| {
+            table.delegate_mut().set_on_row_click(Rc::new({
+                let view = view.clone();
+                move |row_ix, _, cx| {
+                    view.update(cx, |this, cx| this.toggle_row(row_ix, cx)).ok();
+                }
+            }));
             table
                 .delegate_mut()
-                .set_on_row_click(Rc::new(move |row_ix, _, cx| {
-                    view.update(cx, |this, cx| this.toggle_row(row_ix, cx)).ok();
+                .set_on_row_command(Rc::new(move |row_ix, command, _, cx| {
+                    view.update(cx, |this, cx| match command {
+                        RowCommand::OpenInWindow => this.open_task(row_ix, cx),
+                        RowCommand::OpenInBrowser => this.open_in_browser(row_ix, cx),
+                    })
+                    .ok();
                 }));
         });
         let table_events = cx.subscribe(&table, |this, _, event: &TableEvent, cx| match event {
@@ -369,6 +388,23 @@ impl RemindersView {
         }
     }
 
+    fn open_in_browser(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        if let Some(reminder) = self
+            .order_of(row_ix, cx)
+            .and_then(|order| self.reminders.get(order))
+        {
+            cx.emit(RemindersEvent::OpenInBrowser {
+                task_id: reminder.task_id,
+            });
+        }
+    }
+
+    fn on_open_in_browser(&mut self, _: &OpenInBrowser, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(row_ix) = self.table.read(cx).selected_row() {
+            self.open_in_browser(row_ix, cx);
+        }
+    }
+
     fn on_open_task(&mut self, _: &OpenTask, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(row_ix) = self.table.read(cx).selected_row() {
             self.open_task(row_ix, cx);
@@ -454,6 +490,7 @@ impl Render for RemindersView {
             .on_action(cx.listener(Self::on_refresh))
             .on_action(cx.listener(Self::on_focus_search))
             .on_action(cx.listener(Self::on_open_task))
+            .on_action(cx.listener(Self::on_open_in_browser))
             .size_full()
             .gap_4()
             .p_6()
@@ -1110,5 +1147,63 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         assert_eq!(*opened.borrow(), ["Call landlord", "Pay rent"]);
+    }
+
+    #[gpui_kit::test]
+    fn row_menu_and_mod_o_open_the_task_elsewhere(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let second = Reminder {
+            task_id: 2,
+            ..reminder(soon, "Call landlord")
+        };
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let reminders = vec![reminder(soon, "Pay rent"), second];
+            open(options(), "Reminders – Home", Some(reminders), cx).unwrap()
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = Rc::clone(&events);
+            cx.subscribe(&view, move |_, event: &RemindersEvent, _| match event {
+                RemindersEvent::OpenTask(reminder) => {
+                    events
+                        .borrow_mut()
+                        .push(format!("window {}", reminder.task_id));
+                }
+                RemindersEvent::OpenInBrowser { task_id } => {
+                    events.borrow_mut().push(format!("browser {task_id}"));
+                }
+                _ => {}
+            })
+            .detach();
+        });
+        let pick = |cx: &mut TestAppContext, label: &str, item: usize| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.right_click(("row", 1_usize), cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.find_by_label(label);
+                window.within("popup-menu").click(item, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        pick(cx, "Open in new window", 0);
+        pick(cx, "Open in browser", 1);
+        assert_eq!(*events.borrow(), ["window 2", "browser 2"]);
+
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(("row", 0_usize), cx);
+            window.key_down("secondary-o", false, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), ["window 2", "browser 2", "browser 1"]);
     }
 }
