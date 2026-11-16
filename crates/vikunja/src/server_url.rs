@@ -63,6 +63,15 @@ impl ServerUrl {
         url
     }
 
+    /// The task's page in the server's web app, e.g. `…/tasks/42`.
+    #[must_use]
+    pub fn task_page(&self, task_id: i64) -> Url {
+        let mut url = self.0.clone();
+        let base = url.path().to_owned();
+        url.set_path(&format!("{base}tasks/{task_id}"));
+        url
+    }
+
     #[must_use]
     pub fn as_str(&self) -> &str {
         self.0.as_str()
@@ -130,6 +139,14 @@ mod tests {
             url.endpoint("/info").as_str(),
             "https://x.io/sub/api/v1/info"
         );
+    }
+
+    #[test]
+    fn builds_task_pages() {
+        let root = ServerUrl::parse("https://x.io/api/v1").unwrap();
+        assert_eq!(root.task_page(42).as_str(), "https://x.io/tasks/42");
+        let sub = ServerUrl::parse("x.io/sub/").unwrap();
+        assert_eq!(sub.task_page(7).as_str(), "https://x.io/sub/tasks/7");
     }
 
     #[test]
