@@ -1,10 +1,12 @@
-//! The new reminder window: a form for a task's title, notes, due date, priority,
-//! repeat, labels and project.
+//! The new reminder and edit task windows: a form for a task's title, notes, due date,
+//! priority, repeat, labels and project.
 //!
 //! It never talks to the server. The app fills in the projects and labels with
-//! [`NewReminderView::set_options`], then creates the reminder when the view reports
-//! [`NewReminderEvent::Create`], answering with [`NewReminderView::set_error`] if that
-//! fails. Cmd/Ctrl+Enter (or Enter in the title) creates; Escape cancels.
+//! [`NewReminderView::set_options`] (and, when editing, the task with
+//! [`NewReminderView::set_draft`]), then saves when the view reports
+//! [`NewReminderEvent::Create`] or [`NewReminderEvent::Save`], answering with
+//! [`NewReminderView::set_error`] if that fails. Cmd/Ctrl+Enter (or Enter in the title)
+//! submits; Escape cancels.
 
 mod choice;
 mod label_chip;
@@ -65,15 +67,32 @@ pub fn init(cx: &mut App) {
 pub enum NewReminderEvent {
     /// The user asked to create this reminder; it has a title and a project.
     Create(Draft),
+    /// The user asked to save their changes to the task being edited.
+    Save(Draft),
     /// The user closed the form without creating anything.
     Cancel,
 }
 
 type ChoiceSelect = SelectState<SearchableVec<Choice>>;
 
-/// The form. Projects and labels stay empty, and creating disabled, until
-/// [`Self::set_options`] is called.
+/// What the form is for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Mode {
+    New,
+    Edit,
+}
+
+/// The `level` standing for no priority in the priority select.
+const NO_PRIORITY: i64 = 0;
+
+/// The form. Projects and labels stay empty, and submitting disabled, until
+/// [`Self::set_options`] is called (and, when editing, [`Self::set_draft`]).
 pub struct NewReminderView {
+    mode: Mode,
+    /// What the repeat select offers, by item id.
+    repeat_choices: Vec<RepeatChoice>,
+    /// Editing: the task has been filled in.
+    has_draft: bool,
     title: Entity<InputState>,
     body: Entity<TextareaState>,
     due: Entity<DatePickerState>,
@@ -94,7 +113,19 @@ impl EventEmitter<NewReminderEvent> for NewReminderView {}
 impl NewReminderView {
     /// An empty form due at `now` (in the user's time zone), with low priority.
     pub fn new(now: DateTime, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let defaults = Draft::new(now, None);
+        Self::build(Mode::New, &Draft::new(now, None), window, cx)
+    }
+
+    /// A form for editing a task, empty until [`Self::set_draft`] fills it in.
+    pub fn edit(window: &mut Window, cx: &mut Context<Self>) -> Self {
+        let empty = Draft {
+            due: None,
+            ..Draft::new(DateTime::default(), None)
+        };
+        Self::build(Mode::Edit, &empty, window, cx)
+    }
+
+    fn build(mode: Mode, defaults: &Draft, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let title = cx.new(|cx| InputState::new(window, cx).placeholder("What to be reminded of"));
         let body = cx.new(|cx| TextareaState::new(window, cx).placeholder("Notes"));
         let due = cx.new(|cx| {
@@ -107,25 +138,23 @@ impl NewReminderView {
         let priorities: Vec<Choice> = Priority::ALL
             .iter()
             .map(|priority| Choice::new(priority.level(), priority.label()))
+            .chain([Choice::new(NO_PRIORITY, "No priority")])
             .collect();
-        let low = Priority::ALL.iter().position(|p| *p == defaults.priority);
+        let level = defaults.priority.map_or(NO_PRIORITY, Priority::level);
+        let selected = priorities.iter().position(|choice| choice.id == level);
         let priority = cx.new(|cx| {
             SelectState::new(
                 SearchableVec::new(priorities),
-                low.map(IndexPath::new),
+                selected.map(IndexPath::new),
                 window,
                 cx,
             )
         });
-        let repeats: Vec<Choice> = RepeatChoice::ALL
-            .iter()
-            .enumerate()
-            .map(|(ix, repeat)| Choice::new(index_id(ix), repeat.label()))
-            .collect();
-        let never = RepeatChoice::ALL.iter().position(|r| *r == defaults.repeat);
+        let repeat_choices = RepeatChoice::ALL.to_vec();
+        let never = repeat_choices.iter().position(|r| *r == defaults.repeat);
         let repeat = cx.new(|cx| {
             SelectState::new(
-                SearchableVec::new(repeats),
+                SearchableVec::new(repeat_items(&repeat_choices)),
                 never.map(IndexPath::new),
                 window,
                 cx,
@@ -137,10 +166,13 @@ impl NewReminderView {
         title.read(cx).focus_handle(cx).focus(window, cx);
         let title_events = cx.subscribe(&title, |this, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::PressEnter { .. }) {
-                this.create(cx);
+                this.submit(cx);
             }
         });
         Self {
+            mode,
+            repeat_choices,
+            has_draft: mode == Mode::New,
             title,
             body,
             due,
@@ -163,9 +195,14 @@ impl NewReminderView {
             .iter()
             .map(|project| Choice::new(project.id, project.title.clone()))
             .collect();
+        let selected = match self.mode {
+            Mode::New => options.default_project_id,
+            // Keep the task's project if it was filled in first.
+            Mode::Edit => self.project.read(cx).selected_value().copied(),
+        };
         self.project.update(cx, |select, cx| {
             select.set_items(SearchableVec::new(projects), window, cx);
-            if let Some(id) = options.default_project_id {
+            if let Some(id) = selected {
                 select.set_selected_value(&id, window, cx);
             }
         });
@@ -184,6 +221,45 @@ impl NewReminderView {
         if options.projects.is_empty() {
             self.error = Some("Create a project in Vikunja first.".into());
         }
+        cx.notify();
+    }
+
+    /// Fill the form in with `draft`, e.g. the task being edited. Call after
+    /// [`Self::set_options`], so its project and labels are listed.
+    pub fn set_draft(&mut self, draft: &Draft, window: &mut Window, cx: &mut Context<Self>) {
+        let title = SharedString::from(draft.title.clone());
+        self.title
+            .update(cx, |input, cx| input.set_value(title, window, cx));
+        let body = SharedString::from(draft.body.clone());
+        self.body
+            .update(cx, |input, cx| input.set_value(body, window, cx));
+        let due = draft.due.and_then(to_naive);
+        self.due.update(cx, |picker, cx| {
+            picker.set_date_time(PickedDateTime::Single(due), window, cx);
+        });
+        let level = draft.priority.map_or(NO_PRIORITY, Priority::level);
+        self.priority.update(cx, |select, cx| {
+            select.set_selected_value(&level, window, cx);
+        });
+
+        let mut choices = RepeatChoice::ALL.to_vec();
+        if !choices.contains(&draft.repeat) {
+            choices.push(draft.repeat);
+        }
+        let selected = choices.iter().position(|choice| *choice == draft.repeat);
+        let items = repeat_items(&choices);
+        self.repeat_choices = choices;
+        self.repeat.update(cx, |select, cx| {
+            select.set_items(SearchableVec::new(items), window, cx);
+            select.set_selected_index(selected.map(IndexPath::new), window, cx);
+        });
+        if let Some(project_id) = draft.project_id {
+            self.project.update(cx, |select, cx| {
+                select.set_selected_value(&project_id, window, cx);
+            });
+        }
+        self.selected_labels = draft.label_ids.iter().copied().collect();
+        self.has_draft = true;
         cx.notify();
     }
 
@@ -207,14 +283,13 @@ impl NewReminderView {
             .read(cx)
             .selected_value()
             .and_then(|&ix| usize::try_from(ix).ok())
-            .and_then(|ix| RepeatChoice::ALL.get(ix).copied())
+            .and_then(|ix| self.repeat_choices.get(ix).copied())
             .unwrap_or_default();
         let priority = self
             .priority
             .read(cx)
             .selected_value()
-            .and_then(|&level| Priority::from_level(level))
-            .unwrap_or(Priority::Low);
+            .and_then(|&level| Priority::from_level(level));
         let due = match self.due.read(cx).date_time() {
             PickedDateTime::Single(due) => due.and_then(from_naive),
             PickedDateTime::Range(..) => None,
@@ -230,8 +305,13 @@ impl NewReminderView {
         }
     }
 
-    fn create(&mut self, cx: &mut Context<Self>) {
-        if self.saving || !self.loaded {
+    /// The form can be submitted: everything it needs has arrived.
+    fn ready(&self) -> bool {
+        self.loaded && self.has_draft
+    }
+
+    fn submit(&mut self, cx: &mut Context<Self>) {
+        if self.saving || !self.ready() {
             return;
         }
         let draft = self.draft(cx);
@@ -243,11 +323,14 @@ impl NewReminderView {
         self.saving = true;
         self.error = None;
         cx.notify();
-        cx.emit(NewReminderEvent::Create(draft));
+        cx.emit(match self.mode {
+            Mode::New => NewReminderEvent::Create(draft),
+            Mode::Edit => NewReminderEvent::Save(draft),
+        });
     }
 
     fn on_create(&mut self, _: &Create, _: &mut Window, cx: &mut Context<Self>) {
-        self.create(cx);
+        self.submit(cx);
     }
 
     /// Close without creating, unless a reminder is being created: closing then would
@@ -305,6 +388,15 @@ impl NewReminderView {
     }
 }
 
+/// The repeat select's items; each one's id is its index in `choices`.
+fn repeat_items(choices: &[RepeatChoice]) -> Vec<Choice> {
+    choices
+        .iter()
+        .enumerate()
+        .map(|(ix, repeat)| Choice::new(index_id(ix), repeat.label()))
+        .collect()
+}
+
 /// A select's id for the item at `ix`.
 fn index_id(ix: usize) -> i64 {
     i64::try_from(ix).unwrap_or(i64::MAX)
@@ -339,6 +431,16 @@ fn from_naive(at: NaiveDateTime) -> Option<DateTime> {
 impl Render for NewReminderView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let labels = self.render_labels(cx);
+        let ready = self.ready();
+        let (heading, submit, submitting, submit_name) = match self.mode {
+            Mode::New => (
+                "New Reminder",
+                "Create Reminder",
+                "Creating…",
+                "Create reminder",
+            ),
+            Mode::Edit => ("Edit Task", "Save Changes", "Saving…", "Save changes"),
+        };
         let theme = cx.theme();
         let error = self.error.clone().map(|message| {
             // `Alert` has no accessible name of its own; announce the message.
@@ -363,7 +465,7 @@ impl Render for NewReminderView {
                 div()
                     .text_xl()
                     .font_weight(FontWeight::SEMIBOLD)
-                    .child("New Reminder"),
+                    .child(heading),
             )
             .children(error)
             .child(
@@ -425,12 +527,12 @@ impl Render for NewReminderView {
                                     Select::new(&self.project)
                                         .id("new-reminder-project")
                                         .accessibility_label("Project")
-                                        .placeholder(if self.loaded {
+                                        .placeholder(if ready {
                                             "Choose a project"
                                         } else {
                                             "Loading…"
                                         })
-                                        .disabled(!self.loaded),
+                                        .disabled(!ready),
                                 ),
                             )
                             .child(field().label("Labels").child(labels)),
@@ -451,20 +553,27 @@ impl Render for NewReminderView {
                     .child(
                         Button::new("create-reminder")
                             .primary()
-                            .label(if self.saving {
-                                "Creating…"
-                            } else {
-                                "Create Reminder"
-                            })
-                            .accessibility_label("Create reminder")
-                            .tooltip_with_action("Create reminder", &Create, Some(CONTEXT))
+                            .label(if self.saving { submitting } else { submit })
+                            .accessibility_label(submit_name)
+                            .tooltip_with_action(submit_name, &Create, Some(CONTEXT))
                             .loading(self.saving)
-                            .disabled(self.saving || !self.loaded)
-                            .on_click(cx.listener(|this, _, _, cx| this.create(cx))),
+                            .disabled(self.saving || !ready)
+                            .on_click(cx.listener(|this, _, _, cx| this.submit(cx))),
                     ),
             )
             .test_support()
     }
+}
+
+/// Open an edit task window; fill it in with [`NewReminderView::set_options`] and
+/// [`NewReminderView::set_draft`].
+pub fn open_edit(
+    options: WindowOptions,
+    cx: &mut App,
+) -> gpui_kit::Result<(AnyWindowHandle, Entity<NewReminderView>)> {
+    gpui_kit::open_window(options, cx, |window, cx| {
+        cx.new(|cx| NewReminderView::edit(window, cx))
+    })
 }
 
 /// Open a new reminder window due at `now`.
@@ -547,7 +656,7 @@ mod tests {
         // Defaults: due now, low priority, not repeating; no project until loaded.
         let draft = cx.update(|cx| view.read(cx).draft(cx));
         assert_eq!(draft.due, Some(now()));
-        assert_eq!(draft.priority, Priority::Low);
+        assert_eq!(draft.priority, Some(Priority::Low));
         assert_eq!(draft.repeat, RepeatChoice::Never);
         assert_eq!(draft.project_id, None);
         assert!(has_label(cx, "Title") && has_label(cx, "Due date"));
@@ -658,6 +767,77 @@ mod tests {
         cx.run_until_parked();
         assert!(!*created.borrow());
         assert_eq!(cx.update(|cx| view.read(cx).draft(cx).body), "a\nb");
+    }
+
+    #[gpui_kit::test]
+    fn edits_a_task_and_keeps_what_it_cannot_offer(cx: &mut TestAppContext) {
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            open_edit(WindowOptions::default(), cx).unwrap()
+        });
+        let saved = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let saved = Rc::clone(&saved);
+            cx.subscribe(&view, move |_, event: &NewReminderEvent, _| {
+                saved.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        let three_days = RepeatChoice::Other(vikunja::Repeat::Every {
+            every_secs: 3 * 86_400,
+            from_done: false,
+        });
+        let task = Draft {
+            title: "Pay rent".into(),
+            body: "Flat 2\n\nCall first".into(),
+            due: None,
+            priority: None,
+            repeat: three_days,
+            label_ids: vec![5],
+            project_id: Some(1),
+        };
+        let has_label = |cx: &mut TestAppContext, label: &str| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.try_find_by_label(label).is_some()
+            })
+            .unwrap()
+        };
+        assert!(has_label(cx, "Save changes"));
+
+        // Until the task arrives, there's nothing to save.
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| view.set_options(&options(), window, cx));
+            window.render_frame(cx);
+            window.click("create-reminder", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(saved.borrow().is_empty());
+
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| view.set_draft(&task, window, cx));
+        })
+        .unwrap();
+        // The default project doesn't replace the task's, and the odd repeat and missing
+        // priority come back as they were.
+        assert_eq!(cx.update(|cx| view.read(cx).draft(cx)), task);
+
+        cx.update_window(handle, |_, window, cx| {
+            let title = view.read(cx).title.clone();
+            title.update(cx, |title, cx| title.set_value("Pay the rent", window, cx));
+            window.render_frame(cx);
+            window.click("create-reminder", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let saved = saved.borrow();
+        let [NewReminderEvent::Save(draft)] = saved.as_slice() else {
+            panic!("expected one save, got {saved:?}");
+        };
+        assert_eq!(draft.title, "Pay the rent");
+        assert_eq!(draft.repeat, three_days);
     }
 
     #[test]
