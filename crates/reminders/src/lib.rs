@@ -422,7 +422,7 @@ impl Source {
                 format!("Reminders – {title}")
             }
             Self::Filter(filter) => format!("Reminders – filter “{filter}”"),
-            Self::Search(text) => format!("Reminders – search “{text}”"),
+            Self::Search(text) => format!("Search – “{text}”"),
         }
     }
 

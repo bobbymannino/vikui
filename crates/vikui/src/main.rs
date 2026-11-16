@@ -22,6 +22,7 @@ use gpui_kit::{
 };
 use login::{Credentials, Session};
 use login_ui::Prompt;
+use overview_ui::OverviewEvent;
 use projects_ui::{LoadProjects, ProjectsEvent, ProjectsView};
 use reminders::Source;
 
@@ -39,6 +40,7 @@ fn main() {
     app.run(|cx| {
         gpui_kit::init(cx);
         app_actions::init(cx);
+        overview_ui::init(cx);
         projects_ui::init(cx);
         reminders_ui::init(cx);
         new_reminder_ui::init(cx);
@@ -111,6 +113,8 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
         }),
         cx,
     );
+    let search_session = Arc::clone(&session);
+    let search_expire = expire.clone();
     let result = overview_ui::open(options, cx, move |window, cx| {
         let view = cx.new(|cx| ProjectsView::new(load_projects, window, cx));
         cx.subscribe(&view, move |_, event, cx| {
@@ -142,8 +146,21 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
         .detach();
         view.into()
     });
-    if let Err(err) = result {
-        log::error!("failed to open main window: {err:#}");
+    match result {
+        Ok((_, overview)) => {
+            cx.subscribe(&overview, move |_, OverviewEvent::Search(text), cx| {
+                let expire = search_expire.clone();
+                let session = Arc::clone(&search_session);
+                reminders_window::open_search(
+                    text,
+                    Arc::clone(&search_session),
+                    move |cx| expire(&session, cx),
+                    cx,
+                );
+            })
+            .detach();
+        }
+        Err(err) => log::error!("failed to open main window: {err:#}"),
     }
 }
 

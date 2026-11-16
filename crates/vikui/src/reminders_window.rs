@@ -1,5 +1,6 @@
-//! Opens the reminders window for a project, filter or search and fills it in. There is
-//! one at a time: opening another project replaces it.
+//! Opens the reminders window for a project or filter, and the search window for tasks in
+//! every project, and fills them in. There is one of each at a time: opening another
+//! project replaces the reminders window, and a new search reuses the search window.
 //!
 //! The window's details side panel is a [`ReminderDetailsView`], filled from the tasks
 //! loaded for the list. Marking a task done from the panel, the list or a task window
@@ -21,8 +22,6 @@ use vikunja::{Client, Task};
 
 use crate::task_window::{self, SetDone};
 
-/// Open a window listing the reminders from `source`, loading them in the background.
-///
 /// What one window has loaded, shared by its list and details panel.
 type Tasks = Rc<RefCell<Loaded>>;
 
@@ -41,17 +40,26 @@ impl Loaded {
     }
 }
 
-/// The one open reminders window and what it lists, so opening another project replaces
-/// it instead of piling up windows.
+/// An open window and what loads it, so opening another source replaces or reuses it
+/// instead of piling up windows.
 struct Opened {
     handle: AnyWindowHandle,
     view: WeakEntity<RemindersView>,
-    source: Source,
     load: Rc<Loader>,
 }
 
+impl Opened {
+    fn source(&self) -> Source {
+        self.load.source.borrow().clone()
+    }
+}
+
+/// The reminders window (a project or filter) and the search window.
 #[derive(Default)]
-struct RemindersWindow(Option<Opened>);
+struct RemindersWindow {
+    browse: Option<Opened>,
+    search: Option<Opened>,
+}
 
 impl Global for RemindersWindow {}
 
@@ -70,12 +78,12 @@ pub fn open(
 ) {
     let previous = cx
         .default_global::<RemindersWindow>()
-        .0
+        .browse
         .take()
         .filter(|opened| opened.view.upgrade().is_some());
     let mut bounds = None;
     if let Some(previous) = previous {
-        let same = previous.source == *source;
+        let same = previous.source() == *source;
         let alive = previous
             .handle
             .update(cx, |_, window, _| {
@@ -88,12 +96,11 @@ pub fn open(
             })
             .is_ok();
         if same && alive {
-            cx.set_global(RemindersWindow(Some(previous)));
+            cx.default_global::<RemindersWindow>().browse = Some(previous);
             return;
         }
     }
 
-    let on_session_expired: OnSessionExpired = Rc::new(on_session_expired);
     let title = source.title();
     let mut options = crate::window_options(title.clone(), 1200., 560., cx);
     if bounds.is_some() {
@@ -106,10 +113,87 @@ pub fn open(
             return;
         }
     };
+    let opened = fill(
+        handle,
+        &view,
+        source,
+        session,
+        Rc::new(on_session_expired),
+        cx,
+    );
+    cx.default_global::<RemindersWindow>().browse = Some(opened);
+}
+
+/// Show the tasks matching `text` in every project in the search window, opening it if
+/// needed.
+///
+/// `on_session_expired` runs if the server rejects the session for good.
+pub fn open_search(
+    text: &str,
+    session: Arc<Session>,
+    on_session_expired: impl Fn(&mut App) + 'static,
+    cx: &mut App,
+) {
+    let source = Source::Search(text.to_owned());
+    let open = cx
+        .default_global::<RemindersWindow>()
+        .search
+        .as_ref()
+        .filter(|opened| opened.view.upgrade().is_some())
+        .map(|opened| (opened.handle, opened.view.clone(), Rc::clone(&opened.load)));
+    if let Some((handle, view, load)) = open
+        && let Some(view) = view.upgrade()
+        && handle
+            .update(cx, |_, window, cx| {
+                view.update(cx, |view, cx| view.set_server_search(text, window, cx));
+                window.activate_window();
+            })
+            .is_ok()
+    {
+        load.search(source, cx);
+        return;
+    }
+
+    let options = crate::window_options(source.title(), 1200., 560., cx);
+    let (handle, view) = match reminders_ui::open_search(options, text, cx) {
+        Ok(opened) => opened,
+        Err(err) => {
+            log::error!("failed to open search window: {err:#}");
+            return;
+        }
+    };
+    let opened = fill(
+        handle,
+        &view,
+        &source,
+        session,
+        Rc::new(on_session_expired),
+        cx,
+    );
+    let load = Rc::clone(&opened.load);
+    cx.default_global::<RemindersWindow>().search = Some(opened);
+    cx.subscribe(&view, move |_, event, cx| {
+        if let RemindersEvent::Search(text) = event {
+            load.search(Source::Search(text.to_string()), cx);
+        }
+    })
+    .detach();
+}
+
+/// Load `source` into a newly opened window, and wire up its details panel, refresh and
+/// new reminder button.
+fn fill(
+    handle: AnyWindowHandle,
+    view: &Entity<RemindersView>,
+    source: &Source,
+    session: Arc<Session>,
+    on_session_expired: OnSessionExpired,
+    cx: &mut App,
+) -> Opened {
     let tasks: Tasks = Rc::default();
     attach_details_panel(
         handle,
-        &view,
+        view,
         Rc::clone(&tasks),
         Arc::clone(&session),
         Rc::clone(&on_session_expired),
@@ -117,35 +201,42 @@ pub fn open(
     );
 
     let load = Rc::new(Loader {
-        source: source.clone(),
+        source: RefCell::new(source.clone()),
+        handle,
         session,
         view: view.downgrade(),
         tasks,
         on_session_expired,
     });
     load.run(cx);
-    cx.set_global(RemindersWindow(Some(Opened {
-        handle,
-        view: view.downgrade(),
-        source: source.clone(),
-        load: Rc::clone(&load),
-    })));
-    cx.subscribe(&view, move |_, event, cx| match event {
-        RemindersEvent::Refresh => load.run(cx),
-        RemindersEvent::NewReminder => crate::new_reminder_window::open(cx),
-        _ => {}
+    cx.subscribe(view, {
+        let load = Rc::clone(&load);
+        move |_, event, cx| match event {
+            RemindersEvent::Refresh => load.run(cx),
+            RemindersEvent::NewReminder => crate::new_reminder_window::open(cx),
+            _ => {}
+        }
     })
     .detach();
+    Opened {
+        handle,
+        view: view.downgrade(),
+        load,
+    }
 }
 
-/// Reload the open reminders window, e.g. after adding a reminder it may list.
+/// Reload the open reminders and search windows, e.g. after adding a reminder they may
+/// list.
 pub fn reload(cx: &mut App) {
-    let load = cx
+    let loads: Vec<Rc<Loader>> = cx
         .try_global::<RemindersWindow>()
-        .and_then(|open| open.0.as_ref())
+        .into_iter()
+        .flat_map(|open| [open.browse.as_ref(), open.search.as_ref()])
+        .flatten()
         .filter(|opened| opened.view.upgrade().is_some())
-        .map(|opened| Rc::clone(&opened.load));
-    if let Some(load) = load {
+        .map(|opened| Rc::clone(&opened.load))
+        .collect();
+    for load in loads {
         load.run(cx);
     }
 }
@@ -159,7 +250,9 @@ struct Load {
 
 /// Loads a window's tasks into its list, on open and on every refresh.
 struct Loader {
-    source: Source,
+    /// Changes when the search window searches again.
+    source: RefCell<Source>,
+    handle: AnyWindowHandle,
     session: Arc<Session>,
     view: WeakEntity<RemindersView>,
     tasks: Tasks,
@@ -167,8 +260,18 @@ struct Loader {
 }
 
 impl Loader {
+    /// Load `source` instead, titling the window after it.
+    fn search(self: &Rc<Self>, source: Source, cx: &mut App) {
+        let title = source.title();
+        *self.source.borrow_mut() = source;
+        self.handle
+            .update(cx, |_, window, _| window.set_window_title(&title))
+            .ok();
+        self.run(cx);
+    }
+
     fn run(self: &Rc<Self>, cx: &mut App) {
-        let source = self.source.clone();
+        let source = self.source.borrow().clone();
         let session = Arc::clone(&self.session);
         let load = cx.background_spawn(async move {
             let tasks = session.call(|client, token| source.tasks(client, token))?;
@@ -306,7 +409,7 @@ fn attach_details_panel(
                 task_window::open_in_browser(&server, *task_id, cx);
             }
             RemindersEvent::EditTask { task_id } => crate::edit_task_window::open(*task_id, cx),
-            RemindersEvent::Refresh | RemindersEvent::NewReminder => {}
+            RemindersEvent::Refresh | RemindersEvent::NewReminder | RemindersEvent::Search(_) => {}
         }
     })
     .detach();
@@ -444,8 +547,8 @@ mod tests {
         cx.update(|cx| {
             let source = cx
                 .try_global::<RemindersWindow>()
-                .and_then(|open| open.0.as_ref())
-                .map(|opened| opened.source.clone());
+                .and_then(|open| open.browse.as_ref())
+                .map(Opened::source);
             (cx.windows(), source)
         })
     }
@@ -476,5 +579,32 @@ mod tests {
         assert_eq!(windows.len(), 1, "another project replaces the window");
         assert_ne!(windows, first);
         assert_eq!(source, Some(project(2, "Work")));
+    }
+
+    #[gpui_kit::test]
+    fn keeps_one_search_window_beside_the_reminders_window(cx: &mut TestAppContext) {
+        let session = session();
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            reminders_ui::init(cx);
+            open(&project(1, "Home"), Arc::clone(&session), |_| {}, cx);
+            open_search("rent", Arc::clone(&session), |_| {}, cx);
+        });
+        let search_source = |cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                cx.try_global::<RemindersWindow>()
+                    .and_then(|open| open.search.as_ref())
+                    .map(Opened::source)
+            })
+        };
+        let (windows, source) = state(cx);
+        assert_eq!(windows.len(), 2, "a search doesn't replace the project");
+        assert_eq!(source, Some(project(1, "Home")));
+        assert_eq!(search_source(cx), Some(Source::Search("rent".into())));
+
+        cx.update(|cx| open_search("car", Arc::clone(&session), |_| {}, cx));
+        let (again, _) = state(cx);
+        assert_eq!(again, windows, "searching again reuses the search window");
+        assert_eq!(search_source(cx), Some(Source::Search("car".into())));
     }
 }
