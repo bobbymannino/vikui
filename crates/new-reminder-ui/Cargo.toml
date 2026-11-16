@@ -1,0 +1,23 @@
+[package]
+name = "new-reminder-ui"
+description = "Vikui's new reminder window"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+# The date picker's value type.
+chrono = { version = "0.4.45", default-features = false }
+gpui-kit.workspace = true
+jiff.workspace = true
+log.workspace = true
+new-reminder.workspace = true
+reminders.workspace = true
+
+[dev-dependencies]
+gpui-kit = { workspace = true, features = ["test-support"] }
+vikunja.workspace = true
+
+[lints]
+workspace = true

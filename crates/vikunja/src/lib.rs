@@ -3,6 +3,7 @@
 //! Calls block the current thread; run them on a background executor.
 
 mod error;
+mod new_task;
 mod project;
 mod server_url;
 mod task;
@@ -16,6 +17,7 @@ use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig};
 
 pub use error::Error;
+pub use new_task::NewTask;
 pub use project::{Project, ProjectKind};
 pub use server_url::{ServerUrl, ServerUrlError};
 pub use task::{
@@ -197,6 +199,55 @@ impl Client {
         self.get_all_pages(token, "tasks", &params)
     }
 
+    /// Every label the user can see: their own and those on tasks they can access.
+    pub fn labels(&self, token: &Token) -> Result<Vec<Label>, Error> {
+        self.get_all_pages(token, "labels", &[])
+    }
+
+    /// The project new tasks go to by default, from the user's settings; `None` if the
+    /// user hasn't chosen one.
+    pub fn default_project_id(&self, token: &Token) -> Result<Option<i64>, Error> {
+        let user: CurrentUser = self.get_json(token, "user")?;
+        Ok(Some(user.settings.default_project_id).filter(|&id| id > 0))
+    }
+
+    /// Create `task` in `project_id`, attach its labels, and return it as saved.
+    ///
+    /// The task exists once the first request succeeds, so a label that can't be
+    /// attached is logged rather than failing the call (which would invite creating it
+    /// again); compare the returned task's labels with the ones asked for.
+    pub fn create_task(
+        &self,
+        token: &Token,
+        project_id: i64,
+        task: &NewTask,
+    ) -> Result<Task, Error> {
+        let created: Task = self.put_json(
+            token,
+            &format!("projects/{project_id}/tasks"),
+            &task.to_json(),
+        )?;
+        if task.label_ids.is_empty() {
+            return Ok(created);
+        }
+        let path = format!("tasks/{}/labels", created.id);
+        for &label_id in &task.label_ids {
+            let attached: Result<serde_json::Value, Error> =
+                self.put_json(token, &path, &serde_json::json!({ "label_id": label_id }));
+            if let Err(err) = attached {
+                log::warn!(
+                    "couldn't add label {label_id} to task {}: {err}",
+                    created.id
+                );
+            }
+        }
+        self.get_json(token, &format!("tasks/{}", created.id))
+            .or_else(|err| {
+                log::warn!("couldn't reload task {}: {err}", created.id);
+                Ok(created)
+            })
+    }
+
     /// One saved filter, including the query it stores.
     pub fn saved_filter(&self, token: &Token, filter_id: i64) -> Result<SavedFilter, Error> {
         self.get_json(token, &format!("filters/{filter_id}"))
@@ -235,6 +286,24 @@ impl Client {
         let mut response = self
             .agent
             .post(self.server.endpoint(path).as_str())
+            .header("Accept", ACCEPT_JSON)
+            .header("Authorization", &format!("Bearer {}", token.expose()))
+            .send_json(body)?;
+        if !response.status().is_success() {
+            return Err(error_from(&mut response));
+        }
+        Ok(response.body_mut().read_json()?)
+    }
+
+    fn put_json<T: DeserializeOwned>(
+        &self,
+        token: &Token,
+        path: &str,
+        body: &impl Serialize,
+    ) -> Result<T, Error> {
+        let mut response = self
+            .agent
+            .put(self.server.endpoint(path).as_str())
             .header("Accept", ACCEPT_JSON)
             .header("Authorization", &format!("Bearer {}", token.expose()))
             .send_json(body)?;
@@ -292,6 +361,20 @@ impl Client {
 
 type Response = ureq::http::Response<ureq::Body>;
 
+/// The parts of `GET /user` Vikui reads.
+#[derive(Deserialize)]
+struct CurrentUser {
+    #[serde(default)]
+    settings: UserSettings,
+}
+
+#[derive(Default, Deserialize)]
+struct UserSettings {
+    /// `0` when unset.
+    #[serde(default)]
+    default_project_id: i64,
+}
+
 /// Set `done` on a task's JSON, leaving every other field as the server sent it.
 fn set_done(task: &mut serde_json::Value, done: bool) {
     if let Some(fields) = task.as_object_mut() {
@@ -345,6 +428,15 @@ mod tests {
             ),
         );
         assert_eq!(refresh_cookie(&headers), Some(RefreshToken::new("abc.def")));
+    }
+
+    #[test]
+    fn reads_the_default_project() {
+        let user: CurrentUser =
+            serde_json::from_str(r#"{"id":1,"settings":{"default_project_id":4}}"#).unwrap();
+        assert_eq!(user.settings.default_project_id, 4);
+        let unset: CurrentUser = serde_json::from_str(r#"{"id":1}"#).unwrap();
+        assert_eq!(unset.settings.default_project_id, 0);
     }
 
     #[test]

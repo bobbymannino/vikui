@@ -4734,6 +4734,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "new-reminder"
+version = "0.3.0"
+dependencies = [
+ "jiff 1.0.0",
+ "reminders",
+ "vikunja",
+]
+
+[[package]]
+name = "new-reminder-ui"
+version = "0.3.0"
+dependencies = [
+ "chrono",
+ "gpui-kit",
+ "jiff 1.0.0",
+ "log",
+ "new-reminder",
+ "reminders",
+ "vikunja",
+]
+
+[[package]]
 name = "new_debug_unreachable"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8148,9 +8170,12 @@ version = "0.3.0"
 dependencies = [
  "env_logger",
  "gpui-kit",
+ "jiff 1.0.0",
  "log",
  "login",
  "login-ui",
+ "new-reminder",
+ "new-reminder-ui",
  "overview-ui",
  "preferences",
  "projects-ui",

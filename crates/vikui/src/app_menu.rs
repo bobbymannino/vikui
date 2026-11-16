@@ -7,7 +7,7 @@ use gpui_kit::component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 use gpui_kit::{App, Menu, MenuItem, OsAction};
 
 use crate::app_actions::{
-    CheckForUpdates, CloseWindow, Minimize, OpenSettings, Quit, Refresh, Zoom,
+    CheckForUpdates, CloseWindow, Minimize, NewReminder, OpenSettings, Quit, Refresh, Zoom,
 };
 #[cfg(target_os = "macos")]
 use crate::app_actions::{Hide, HideOthers, ShowAll};
@@ -21,7 +21,11 @@ pub fn init(cx: &mut App) {
 fn menus() -> Vec<Menu> {
     vec![
         app_menu(),
-        Menu::new("File").items([MenuItem::action("Close Window", CloseWindow)]),
+        Menu::new("File").items([
+            MenuItem::action("New Reminder…", NewReminder),
+            MenuItem::separator(),
+            MenuItem::action("Close Window", CloseWindow),
+        ]),
         Menu::new("Edit").items([
             MenuItem::os_action("Undo", Undo, OsAction::Undo),
             MenuItem::os_action("Redo", Redo, OsAction::Redo),

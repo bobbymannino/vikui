@@ -4,6 +4,8 @@
 mod app_actions;
 mod app_menu;
 mod app_preferences;
+mod app_session;
+mod new_reminder_window;
 mod reminders_window;
 mod settings_window;
 mod task_window;
@@ -38,6 +40,7 @@ fn main() {
         app_actions::init(cx);
         projects_ui::init(cx);
         reminders_ui::init(cx);
+        new_reminder_ui::init(cx);
         // Last, so the menus show every key binding.
         app_menu::init(cx);
         Theme::sync_system_appearance(None, cx);
@@ -98,6 +101,15 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
             sign_out(session, cx);
         }
     };
+    app_session::set(
+        Arc::clone(&session),
+        Rc::new({
+            let expire = expire.clone();
+            let session = Arc::clone(&session);
+            move |cx| expire(&session, cx)
+        }),
+        cx,
+    );
     let result = overview_ui::open(options, cx, move |window, cx| {
         let view = cx.new(|cx| ProjectsView::new(load_projects, window, cx));
         cx.subscribe(&view, move |_, event, cx| {
@@ -136,6 +148,7 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
 
 /// Forget the expired session, close its windows and go back to the sign-in window.
 fn sign_out(session: &Session, cx: &mut App) {
+    app_session::clear(cx);
     cx.background_spawn(async {
         if let Err(err) = login::credentials::clear() {
             log::warn!("failed to clear expired credentials: {err:#}");
