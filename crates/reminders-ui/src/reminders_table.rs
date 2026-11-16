@@ -29,6 +29,8 @@ pub struct ReminderRow {
     pub labels: SharedString,
     /// The labels as drawn, one tag each.
     label_tags: Vec<LabelTag>,
+    /// The [`reminders::normalize`]d task title, for searching.
+    pub search_key: String,
     /// Fired already, not scheduled, or its task is done: drawn muted (the details panel
     /// says which). Tasks without a reminder are not muted unless done.
     pub inactive: bool,
@@ -60,6 +62,7 @@ impl ReminderRow {
                         rgb: label.rgb,
                     })
                     .collect(),
+                search_key: reminders::normalize(&reminder.task_title),
                 inactive: reminder.status(now).is_inactive(),
                 is_set: reminder.is_set,
                 order,
