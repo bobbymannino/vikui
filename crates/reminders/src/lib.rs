@@ -109,6 +109,27 @@ pub enum Priority {
 }
 
 impl Priority {
+    /// Every level, lowest first.
+    pub const ALL: [Self; 5] = [
+        Self::Low,
+        Self::Medium,
+        Self::High,
+        Self::Urgent,
+        Self::DoNow,
+    ];
+
+    /// The level Vikunja stores, 1 (low) to 5 (do now).
+    #[must_use]
+    pub fn level(self) -> i64 {
+        match self {
+            Self::Low => 1,
+            Self::Medium => 2,
+            Self::High => 3,
+            Self::Urgent => 4,
+            Self::DoNow => 5,
+        }
+    }
+
     /// `None` for `0` (unset) or levels Vikunja does not define.
     #[must_use]
     pub fn from_level(level: i64) -> Option<Self> {

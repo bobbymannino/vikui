@@ -1,0 +1,15 @@
+[package]
+name = "new-reminder"
+description = "Builds a new Vikui reminder (a task with a reminder at its due date), no UI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+jiff.workspace = true
+reminders.workspace = true
+vikunja.workspace = true
+
+[lints]
+workspace = true
