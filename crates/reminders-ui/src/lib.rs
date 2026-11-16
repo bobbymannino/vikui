@@ -10,6 +10,9 @@
 //! The Refresh button (or Cmd/Ctrl+R) reports [`RemindersEvent::Refresh`]; the caller
 //! loads the reminders again and passes them to [`RemindersView::set_reminders`].
 //!
+//! The search field (Cmd/Ctrl+F) filters the list by task title, ignoring case, spaces
+//! and punctuation (see [`reminders::Search`]). Enter moves to the results; Escape clears.
+//!
 //! Pressing T (as in Vikunja's web app) reports [`RemindersEvent::SetDone`] for the
 //! selected row's task; the caller saves it and answers with
 //! [`RemindersView::set_task_done`].
@@ -21,8 +24,9 @@ use std::rc::Rc;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::Button;
+use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::table::{DataTable, TableEvent, TableState};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
+use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, IconName, h_flex, v_flex};
 use gpui_kit::{
     AnyView, AnyWindowHandle, App, AppContext as _, Context, Entity, EventEmitter, Focusable as _,
     FontWeight, InteractiveElement as _, IntoElement, KeyBinding, KeyBindingContextPredicate,
@@ -31,27 +35,36 @@ use gpui_kit::{
 };
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
-use reminders::Reminder;
+use reminders::{Reminder, Search};
 
 use reminders_table::{ReminderRow, RemindersTable};
 
-gpui_kit::actions!(reminders, [ToggleDetails, ToggleDone, Refresh]);
+gpui_kit::actions!(reminders, [ToggleDetails, ToggleDone, Refresh, FocusSearch]);
 
 const CONTEXT: &str = "Reminders";
+/// Plain keys act on the list only while it has focus, so they type into the search field.
+const LIST_CONTEXT: &str = "Reminders > DataTable";
+const SEARCH_WIDTH: f32 = 240.;
 const DETAILS_WIDTH: f32 = 340.;
 
 /// Register the reminders view's key bindings. Call once at startup.
 pub fn init(cx: &mut App) {
     cx.bind_keys([
-        KeyBinding::new("enter", ToggleDetails, Some(CONTEXT)),
-        KeyBinding::new("t", ToggleDone, Some(CONTEXT)),
+        KeyBinding::new("enter", ToggleDetails, Some(LIST_CONTEXT)),
+        KeyBinding::new("t", ToggleDone, Some(LIST_CONTEXT)),
     ]);
     // `KeyBinding::new` only accepts explicit modifiers; `load` resolves `secondary-`
     // to Cmd on macOS and Ctrl elsewhere.
     let context = KeyBindingContextPredicate::parse(CONTEXT).ok().map(Rc::new);
-    match KeyBinding::load("secondary-r", Box::new(Refresh), context, false, None, cx) {
-        Ok(binding) => cx.bind_keys([binding]),
-        Err(err) => log::error!("invalid refresh key binding: {err}"),
+    let bindings: [(&str, Box<dyn gpui_kit::Action>); 2] = [
+        ("secondary-r", Box::new(Refresh)),
+        ("secondary-f", Box::new(FocusSearch)),
+    ];
+    for (keystrokes, action) in bindings {
+        match KeyBinding::load(keystrokes, action, context.clone(), false, None, cx) {
+            Ok(binding) => cx.bind_keys([binding]),
+            Err(err) => log::error!("invalid key binding {keystrokes}: {err}"),
+        }
     }
 }
 
@@ -71,6 +84,11 @@ pub enum RemindersEvent {
 pub struct RemindersView {
     title: SharedString,
     table: Entity<TableState<RemindersTable>>,
+    search: Entity<InputState>,
+    /// What the search field currently filters by.
+    query: Search,
+    /// The search field's text, for the empty-list message.
+    query_text: SharedString,
     summary: SharedString,
     error: Option<SharedString>,
     /// Waiting for reminders (the first load or a refresh).
@@ -82,6 +100,7 @@ pub struct RemindersView {
     /// `order` of the reminder the details panel is open on.
     details_for: Option<usize>,
     _table_events: Subscription,
+    _search_events: Subscription,
 }
 
 impl RemindersView {
@@ -114,9 +133,32 @@ impl RemindersView {
             _ => {}
         });
 
+        let search = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder("Search reminders")
+                .clean_on_escape()
+        });
+        let search_events = cx.subscribe_in(
+            &search,
+            window,
+            |this, search, event: &InputEvent, window, cx| match event {
+                InputEvent::Change => {
+                    let text = search.read(cx).value();
+                    this.set_search(text, cx);
+                }
+                InputEvent::PressEnter { .. } => {
+                    this.table.read(cx).focus_handle(cx).focus(window, cx);
+                }
+                InputEvent::Focus | InputEvent::Blur => {}
+            },
+        );
+
         let mut this = Self {
             title: title.into(),
             table,
+            search,
+            query: Search::default(),
+            query_text: SharedString::default(),
             summary: SharedString::default(),
             error: None,
             loading: reminders.is_none(),
@@ -125,6 +167,7 @@ impl RemindersView {
             details_panel: None,
             details_for: None,
             _table_events: table_events,
+            _search_events: search_events,
         };
         match reminders {
             Some(reminders) => this.set_reminders(&reminders, None, cx),
@@ -172,6 +215,20 @@ impl RemindersView {
         }
     }
 
+    /// Filter the list by `text`; see [`reminders::Search`].
+    fn set_search(&mut self, text: SharedString, cx: &mut Context<Self>) {
+        let query = Search::new(&text);
+        self.query_text = text;
+        if query != self.query {
+            self.query = query;
+            self.refresh_rows(cx);
+        }
+    }
+
+    fn on_focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.read(cx).focus_handle(cx).focus(window, cx);
+    }
+
     fn on_refresh(&mut self, _: &Refresh, _: &mut Window, cx: &mut Context<Self>) {
         if !self.loading {
             self.loading = true;
@@ -198,15 +255,29 @@ impl RemindersView {
     }
 
     fn refresh_rows(&mut self, cx: &mut Context<Self>) {
-        let rows =
+        let mut rows =
             ReminderRow::from_reminders(&self.reminders, Timestamp::now(), &TimeZone::system());
         let set = rows.iter().filter(|row| row.is_set).count();
         let upcoming = rows
             .iter()
             .filter(|row| row.is_set && !row.inactive)
             .count();
-        self.summary = summary(set, upcoming, self.matched_tasks);
-        let empty_message = empty_message(self.matched_tasks);
+        let total = rows.len();
+        rows.retain(|row| self.query.matches_normalized(&row.search_key));
+        let mut summary = summary(set, upcoming, self.matched_tasks);
+        let empty_message = if self.query.is_empty() {
+            empty_message(self.matched_tasks)
+        } else {
+            summary = format!("{summary} · {} of {total} shown", rows.len()).into();
+            format!("Nothing matches “{}”.", self.query_text.trim()).into()
+        };
+        self.summary = summary;
+        // A filtered-out reminder can't stay open in the details panel.
+        if let Some(order) = self.details_for
+            && !rows.iter().any(|row| row.order == order)
+        {
+            self.details_for = None;
+        }
         self.table.update(cx, |table, cx| {
             table.delegate_mut().set_empty_message(empty_message);
             table.delegate_mut().set_rows(rows);
@@ -343,6 +414,7 @@ impl Render for RemindersView {
             .on_action(cx.listener(Self::on_toggle_details))
             .on_action(cx.listener(Self::on_toggle_done))
             .on_action(cx.listener(Self::on_refresh))
+            .on_action(cx.listener(Self::on_focus_search))
             .size_full()
             .gap_4()
             .p_6()
@@ -364,6 +436,14 @@ impl Render for RemindersView {
                             .text_sm()
                             .text_color(theme.muted_foreground)
                             .child(self.summary.clone()),
+                    )
+                    .child(
+                        Input::new(&self.search)
+                            .id("search-reminders")
+                            .aria_label("Search reminders")
+                            .prefix(Icon::new(IconName::Search).text_color(theme.muted_foreground))
+                            .cleanable(true)
+                            .w(px(SEARCH_WIDTH)),
                     )
                     .child(
                         Button::new("refresh-reminders")
@@ -810,5 +890,133 @@ mod tests {
             window.find_by_label("Buy milk");
         })
         .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn search_filters_by_normalized_title(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let reminders = vec![
+                reminder(soon, "Pay-Rent!"),
+                Reminder {
+                    task_id: 2,
+                    ..reminder(soon, "Call landlord")
+                },
+                Reminder {
+                    task_id: 3,
+                    ..reminder(soon, "pay rent (flat 2)")
+                },
+            ];
+            open(options(), "Reminders – Home", Some(reminders), cx).unwrap()
+        });
+        let titles = |cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                let table = view.read(cx).table.read(cx);
+                (0..)
+                    .map_while(|ix| table.delegate().row(ix).map(|row| row.task.to_string()))
+                    .collect::<Vec<_>>()
+            })
+        };
+        let search = |cx: &mut TestAppContext, text: &str| {
+            let text = SharedString::from(text.to_owned());
+            cx.update(|cx| view.update(cx, |view, cx| view.set_search(text, cx)));
+        };
+        let has_label = |cx: &mut TestAppContext, label: &str| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.try_find_by_label(label).is_some()
+            })
+            .unwrap()
+        };
+        assert!(has_label(cx, "Search reminders"));
+
+        search(cx, "PAY rent");
+        assert_eq!(titles(cx), ["Pay-Rent!", "pay rent (flat 2)"]);
+        assert!(
+            cx.update(|cx| view.read(cx).summary.ends_with("· 2 of 3 shown")),
+            "summary counts shown rows"
+        );
+        search(cx, "flat-2");
+        assert_eq!(titles(cx), ["pay rent (flat 2)"]);
+        search(cx, "zzz");
+        assert_eq!(titles(cx), Vec::<String>::new());
+        assert!(has_label(cx, "Nothing matches “zzz”."));
+        // Punctuation alone filters nothing.
+        search(cx, " -! ");
+        assert_eq!(titles(cx).len(), 3);
+
+        // A reminder filtered out of the list closes its details panel.
+        cx.update(|cx| {
+            let panel = cx.new(|_| TestPanel);
+            view.update(cx, |view, cx| {
+                view.set_details_panel(panel.into(), cx);
+                view.toggle_row(1, cx);
+            });
+        });
+        assert!(has_label(cx, "Test panel"));
+        search(cx, "pay");
+        assert!(!has_label(cx, "Test panel"));
+    }
+
+    #[gpui_kit::test]
+    fn typing_in_search_does_not_trigger_list_shortcuts(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            open(
+                options(),
+                "Reminders – Home",
+                Some(vec![reminder(soon, "Pay rent")]),
+                cx,
+            )
+            .unwrap()
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = Rc::clone(&events);
+            cx.subscribe(&view, move |_, event: &RemindersEvent, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        let key = |cx: &mut TestAppContext, key: &str| {
+            cx.update_window(handle, |_, window, cx| {
+                window.key_down(key, false, cx);
+                window.key_up(key, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        let search_focused = |cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, cx| {
+                view.read(cx)
+                    .search
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window)
+            })
+            .unwrap()
+        };
+
+        key(cx, "down");
+        key(cx, "secondary-f");
+        assert!(search_focused(cx));
+        key(cx, "t");
+        assert_eq!(*events.borrow(), []);
+
+        // Enter moves to the list, where T marks the selected task done again.
+        key(cx, "enter");
+        assert!(!search_focused(cx));
+        key(cx, "t");
+        assert_eq!(
+            *events.borrow(),
+            [RemindersEvent::SetDone {
+                task_id: 1,
+                done: true
+            }]
+        );
     }
 }
