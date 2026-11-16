@@ -140,10 +140,25 @@ impl Task {
 }
 
 /// A label on a task.
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 pub struct Label {
     pub id: i64,
     pub title: String,
+    /// e.g. `e8e8e8`, with or without a leading `#`; may be empty.
+    #[serde(default)]
+    pub hex_color: String,
+}
+
+impl Label {
+    /// The label's colour as `0xRRGGBB`, or `None` when it has none or it is malformed.
+    #[must_use]
+    pub fn rgb(&self) -> Option<u32> {
+        let hex = self.hex_color.trim().trim_start_matches('#');
+        if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+            return None;
+        }
+        u32::from_str_radix(hex, 16).ok()
+    }
 }
 
 /// How a task repeats.
@@ -292,9 +307,23 @@ mod tests {
             task.labels,
             [Label {
                 id: 2,
-                title: "Bills".into()
+                title: "Bills".into(),
+                hex_color: "ff0000".into(),
             }]
         );
+        assert_eq!(task.labels[0].rgb(), Some(0xff_00_00));
+        let color = |hex: &str| {
+            Label {
+                hex_color: hex.into(),
+                ..Label::default()
+            }
+            .rgb()
+        };
+        assert_eq!(color("#1973ff"), Some(0x19_73_ff));
+        assert_eq!(color(""), None);
+        assert_eq!(color("fff"), None);
+        assert_eq!(color("zzzzzz"), None);
+        assert_eq!(color("+12345"), None);
         assert_eq!(
             task.repeat(),
             Some(Repeat::Every {
