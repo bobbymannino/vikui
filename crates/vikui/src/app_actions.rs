@@ -17,6 +17,7 @@ gpui_kit::actions!(
         ShowAll,
         Refresh,
         OpenSettings,
+        CheckForUpdates,
     ]
 );
 
@@ -59,6 +60,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
     cx.on_action(|_: &OpenSettings, cx| crate::settings_window::open(cx));
+    cx.on_action(|_: &CheckForUpdates, cx| crate::settings_window::check_for_updates(cx));
     cx.on_action(|_: &Refresh, cx| {
         // Each list view has its own refresh action; only the focused one handles it.
         cx.dispatch_action(&projects_ui::Refresh);

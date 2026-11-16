@@ -20,6 +20,7 @@ reminder-details-ui.workspace = true
 reminders.workspace = true
 reminders-ui.workspace = true
 settings-ui.workspace = true
+updater.workspace = true
 vikunja.workspace = true
 
 # Embeds the app icon in vikui.exe; only Windows hosts can compile the resource.

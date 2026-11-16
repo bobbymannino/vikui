@@ -6,7 +6,9 @@
 use gpui_kit::component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 use gpui_kit::{App, Menu, MenuItem, OsAction};
 
-use crate::app_actions::{CloseWindow, Minimize, OpenSettings, Quit, Refresh, Zoom};
+use crate::app_actions::{
+    CheckForUpdates, CloseWindow, Minimize, OpenSettings, Quit, Refresh, Zoom,
+};
 #[cfg(target_os = "macos")]
 use crate::app_actions::{Hide, HideOthers, ShowAll};
 
@@ -42,6 +44,7 @@ fn menus() -> Vec<Menu> {
 fn app_menu() -> Menu {
     Menu::new("Vikui").items([
         MenuItem::action("Settings…", OpenSettings),
+        MenuItem::action("Check for Updates…", CheckForUpdates),
         MenuItem::separator(),
         MenuItem::os_submenu("Services", gpui_kit::SystemMenuType::Services),
         MenuItem::separator(),
@@ -57,6 +60,7 @@ fn app_menu() -> Menu {
 fn app_menu() -> Menu {
     Menu::new("Vikui").items([
         MenuItem::action("Settings…", OpenSettings),
+        MenuItem::action("Check for Updates…", CheckForUpdates),
         MenuItem::separator(),
         MenuItem::action("Quit", Quit),
     ])
@@ -86,6 +90,11 @@ mod tests {
             menus
                 .first()
                 .is_some_and(|menu| names(menu).contains(&"Settings…"))
+        );
+        assert!(
+            menus
+                .first()
+                .is_some_and(|menu| names(menu).contains(&"Check for Updates…"))
         );
         assert!(
             menus

@@ -4,7 +4,7 @@ members = ["crates/*"]
 default-members = ["crates/vikui"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.2.0"
 edition = "2024"
 rust-version = "1.100"
 publish = false
@@ -21,6 +21,7 @@ reminder-details-ui = { path = "crates/reminder-details-ui" }
 reminders = { path = "crates/reminders" }
 reminders-ui = { path = "crates/reminders-ui" }
 settings-ui = { path = "crates/settings-ui" }
+updater = { path = "crates/updater" }
 vikunja = { path = "crates/vikunja" }
 
 # External crates

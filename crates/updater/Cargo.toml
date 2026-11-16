@@ -1,0 +1,23 @@
+[package]
+name = "updater"
+description = "Updates Vikui in place from its GitHub releases"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+flate2 = "1.1.11"
+log.workspace = true
+semver = "1.0.28"
+serde.workspace = true
+serde_json.workspace = true
+sha2 = "0.11.1"
+tar = "0.4.46"
+tempfile = "3.27.0"
+thiserror.workspace = true
+ureq.workspace = true
+zip = { version = "9.6.0", default-features = false, features = ["deflate-flate2"] }
+
+[lints]
+workspace = true
