@@ -20,6 +20,7 @@ reminder-details-ui.workspace = true
 reminders.workspace = true
 reminders-ui.workspace = true
 settings-ui.workspace = true
+preferences.workspace = true
 updater.workspace = true
 vikunja.workspace = true
 

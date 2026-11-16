@@ -79,10 +79,15 @@ libfontconfig-dev libfreetype-dev pkg-config`).
 
 ## Updating
 
-Vikui checks [Releases](../../releases) when you open **Settings** (`Mod+,`) or choose
-**Check for Updates…** from the Vikui menu. If a newer version is out, click
-**Update to <version> and Restart**: Vikui downloads it, checks its SHA-256 checksum,
-replaces itself and relaunches. Prereleases are never offered.
+Vikui checks [Releases](../../releases) when it opens and shows **Settings** if a newer
+version is out; opening **Settings** (`Mod+,`) checks too. Turn off **Check for updates on
+open** in Settings to check only when you choose **Check for Updates…** from the Vikui
+menu or the button in Settings. Click **Update to <version> and Restart**: Vikui
+downloads it, checks its SHA-256 checksum, replaces itself and relaunches. Prereleases
+are never offered.
+
+Preferences are saved in `preferences.json` in `~/Library/Application Support/vikui` on
+macOS, `~/.config/vikui` on Linux and `%APPDATA%\vikui` on Windows.
 
 Vikui must be able to write to the folder it is installed in. On macOS, move
 `Vikui.app` to **Applications** first; copies built from source update with `cargo install`.

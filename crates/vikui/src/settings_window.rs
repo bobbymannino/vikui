@@ -1,5 +1,8 @@
 //! Opens the settings window, or brings the open one to the front, and carries out the
 //! update checks and installs it asks for.
+//!
+//! With "Check for updates on open" on, the app checks when it starts and opens this
+//! window only if an update is available; opening the window checks too.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -10,7 +13,14 @@ use updater::{Release, Updater};
 
 /// The open settings window, so a second request focuses it instead of opening another.
 #[derive(Default)]
-struct SettingsWindow(Option<(AnyWindowHandle, WeakEntity<SettingsView>)>);
+struct SettingsWindow(Option<Opened>);
+
+#[derive(Clone)]
+struct Opened {
+    handle: AnyWindowHandle,
+    view: WeakEntity<SettingsView>,
+    updates: Rc<Updates>,
+}
 
 impl Global for SettingsWindow {}
 
@@ -24,43 +34,76 @@ fn about() -> About {
 }
 
 /// Open the settings window, or activate it if it is already open. Opening it checks for
-/// updates, so an available one is a click away.
+/// updates if "Check for updates on open" is on, so an available one is a click away.
 pub fn open(cx: &mut App) {
-    if open_view(cx).is_none() {
-        log::error!("failed to open settings window");
-    }
-}
-
-/// Open the settings window and check for updates, even if it was already open.
-pub fn check_for_updates(cx: &mut App) {
-    if let Some((view, opened)) = open_view(cx)
-        && !opened
+    let check = crate::app_preferences::get(cx).check_for_updates_on_open;
+    if let Some((opened, true)) = open_view(cx)
+        && check
     {
-        view.update(cx, |_, cx| cx.emit(SettingsEvent::CheckForUpdates));
+        opened.updates.check(cx);
     }
 }
 
-/// The settings view, and whether it was just opened.
-fn open_view(cx: &mut App) -> Option<(Entity<SettingsView>, bool)> {
-    if let Some((handle, view)) = cx
+/// Open the settings window and check for updates.
+pub fn check_for_updates(cx: &mut App) {
+    if let Some((opened, _)) = open_view(cx) {
+        opened.updates.check(cx);
+    }
+}
+
+/// Check for updates as the app starts, opening the settings window only if one is
+/// available. Failures are logged, not shown: the user didn't ask for this check.
+pub fn check_on_launch(cx: &mut App) {
+    let updater = match new_updater() {
+        Ok(updater) => updater,
+        Err(err) => return log::warn!("not checking for updates: {err}"),
+    };
+    let check = cx.background_spawn(async move { updater.check() });
+    cx.spawn(async move |cx| match check.await {
+        Ok(Some(release)) => {
+            log::info!("Vikui {} is available", release.version);
+            cx.update(|cx| {
+                if let Some((opened, _)) = open_view(cx) {
+                    opened.updates.found(release, cx);
+                }
+            });
+        }
+        Ok(None) => log::info!("Vikui is up to date"),
+        Err(err) => log::warn!("update check on launch failed: {err}"),
+    })
+    .detach();
+}
+
+/// The settings window, and whether it was just opened.
+fn open_view(cx: &mut App) -> Option<(Opened, bool)> {
+    if let Some(opened) = cx
         .try_global::<SettingsWindow>()
         .and_then(|open| open.0.clone())
-        && let Some(view) = view.upgrade()
-        && handle
+        && opened.view.upgrade().is_some()
+        && opened
+            .handle
             .update(cx, |_, window, _| window.activate_window())
             .is_ok()
     {
-        return Some((view, false));
+        return Some((opened, false));
     }
     let title = format!("Settings – {}", crate::APP_NAME);
-    let options = crate::window_options(title, 480., 360., cx);
-    let (handle, view) = settings_ui::open(options, about(), cx)
+    let options = crate::window_options(title, 480., 400., cx);
+    let check_on_open = crate::app_preferences::get(cx).check_for_updates_on_open;
+    let (handle, view) = settings_ui::open(options, about(), check_on_open, cx)
         .inspect_err(|err| log::error!("failed to open settings window: {err:#}"))
         .ok()?;
-    cx.set_global(SettingsWindow(Some((handle, view.downgrade()))));
-    Updates::attach(&view, cx);
-    view.update(cx, |_, cx| cx.emit(SettingsEvent::CheckForUpdates));
-    Some((view, true))
+    let opened = Opened {
+        handle,
+        view: view.downgrade(),
+        updates: Updates::attach(&view, cx),
+    };
+    cx.set_global(SettingsWindow(Some(opened.clone())));
+    Some((opened, true))
+}
+
+fn new_updater() -> Result<Updater, updater::Error> {
+    Updater::new(env!("CARGO_PKG_REPOSITORY"), env!("CARGO_PKG_VERSION"))
 }
 
 /// Checks for and installs updates for one settings window.
@@ -72,19 +115,31 @@ struct Updates {
 }
 
 impl Updates {
-    fn attach(view: &Entity<SettingsView>, cx: &mut App) {
-        let updater = Updater::new(env!("CARGO_PKG_REPOSITORY"), env!("CARGO_PKG_VERSION"))
-            .map_err(|err| err.to_string());
+    fn attach(view: &Entity<SettingsView>, cx: &mut App) -> Rc<Self> {
         let this = Rc::new(Self {
             view: view.downgrade(),
-            updater,
+            updater: new_updater().map_err(|err| err.to_string()),
             available: RefCell::default(),
         });
-        cx.subscribe(view, move |_, event, cx| match event {
-            SettingsEvent::CheckForUpdates => this.check(cx),
-            SettingsEvent::InstallUpdate => this.install(cx),
+        let updates = Rc::clone(&this);
+        cx.subscribe(view, move |_, event, cx| match *event {
+            SettingsEvent::CheckForUpdates => updates.check(cx),
+            SettingsEvent::InstallUpdate => updates.install(cx),
+            SettingsEvent::SetCheckForUpdatesOnOpen(on) => {
+                crate::app_preferences::update(cx, |preferences| {
+                    preferences.check_for_updates_on_open = on;
+                });
+            }
         })
         .detach();
+        this
+    }
+
+    /// Offer `release`, found by a check made elsewhere.
+    fn found(&self, release: Release, cx: &mut App) {
+        let version = release.version.to_string().into();
+        *self.available.borrow_mut() = Some(release);
+        self.set_status(UpdateStatus::Available { version }, cx);
     }
 
     fn set_status(&self, status: UpdateStatus, cx: &mut App) {
@@ -114,11 +169,7 @@ impl Updates {
             let result = check.await;
             cx.update(|cx| {
                 let status = match result {
-                    Ok(Some(release)) => {
-                        let version = release.version.to_string().into();
-                        *this.available.borrow_mut() = Some(release);
-                        UpdateStatus::Available { version }
-                    }
+                    Ok(Some(release)) => return this.found(release, cx),
                     Ok(None) => UpdateStatus::UpToDate,
                     Err(err) => {
                         log::warn!("update check failed: {err}");
