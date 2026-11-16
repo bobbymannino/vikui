@@ -77,6 +77,16 @@ On Linux, also install the `-dev` packages for the libraries above
 (`libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libx11-xcb-dev libxcb1-dev
 libfontconfig-dev libfreetype-dev pkg-config`).
 
+## Updating
+
+Vikui checks [Releases](../../releases) when you open **Settings** (`Mod+,`) or choose
+**Check for Updates…** from the Vikui menu. If a newer version is out, click
+**Update to <version> and Restart**: Vikui downloads it, checks its SHA-256 checksum,
+replaces itself and relaunches. Prereleases are never offered.
+
+Vikui must be able to write to the folder it is installed in. On macOS, move
+`Vikui.app` to **Applications** first; copies built from source update with `cargo install`.
+
 ## Keyboard shortcuts
 
 `Mod` is Cmd on macOS and Ctrl on Linux and Windows.
