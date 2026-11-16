@@ -367,10 +367,15 @@ impl Render for NewReminderView {
             )
             .children(error)
             .child(
+                // Room for the focus rings drawn outside the fields, which the scroll
+                // area would otherwise clip; the negative margin keeps the fields
+                // aligned with the heading and buttons.
                 div()
                     .id("new-reminder-fields")
                     .flex_1()
                     .min_h_0()
+                    .m_neg_1()
+                    .p_1()
                     .overflow_y_scroll()
                     .child(
                         v_form()
