@@ -15,6 +15,7 @@ repository = "https://github.com/bobbymannino/vikui"
 login = { path = "crates/login" }
 login-ui = { path = "crates/login-ui" }
 new-reminder = { path = "crates/new-reminder" }
+new-reminder-ui = { path = "crates/new-reminder-ui" }
 overview-ui = { path = "crates/overview-ui" }
 preferences = { path = "crates/preferences" }
 projects-ui = { path = "crates/projects-ui" }
