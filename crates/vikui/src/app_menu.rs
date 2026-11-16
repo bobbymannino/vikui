@@ -6,7 +6,7 @@
 use gpui_kit::component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 use gpui_kit::{App, Menu, MenuItem, OsAction};
 
-use crate::app_actions::{CloseWindow, Minimize, Quit, Refresh, Zoom};
+use crate::app_actions::{CloseWindow, Minimize, OpenSettings, Quit, Refresh, Zoom};
 #[cfg(target_os = "macos")]
 use crate::app_actions::{Hide, HideOthers, ShowAll};
 
@@ -41,6 +41,8 @@ fn menus() -> Vec<Menu> {
 #[cfg(target_os = "macos")]
 fn app_menu() -> Menu {
     Menu::new("Vikui").items([
+        MenuItem::action("Settings…", OpenSettings),
+        MenuItem::separator(),
         MenuItem::os_submenu("Services", gpui_kit::SystemMenuType::Services),
         MenuItem::separator(),
         MenuItem::action("Hide Vikui", Hide),
@@ -53,7 +55,11 @@ fn app_menu() -> Menu {
 
 #[cfg(not(target_os = "macos"))]
 fn app_menu() -> Menu {
-    Menu::new("Vikui").items([MenuItem::action("Quit", Quit)])
+    Menu::new("Vikui").items([
+        MenuItem::action("Settings…", OpenSettings),
+        MenuItem::separator(),
+        MenuItem::action("Quit", Quit),
+    ])
 }
 
 #[cfg(test)]
@@ -76,6 +82,11 @@ mod tests {
         let titles: Vec<&str> = menus.iter().map(|menu| menu.name.as_ref()).collect();
         assert_eq!(titles, ["Vikui", "File", "Edit", "View", "Window"]);
         assert!(menus.iter().any(|menu| names(menu).contains(&"Refresh")));
+        assert!(
+            menus
+                .first()
+                .is_some_and(|menu| names(menu).contains(&"Settings…"))
+        );
         assert!(
             menus
                 .first()

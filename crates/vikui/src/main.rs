@@ -4,6 +4,7 @@
 mod app_actions;
 mod app_menu;
 mod reminders_window;
+mod settings_window;
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -18,6 +19,9 @@ use login::{Credentials, Session};
 use login_ui::Prompt;
 use projects_ui::{LoadProjects, ProjectsEvent, ProjectsView};
 use reminders::Source;
+
+/// The app's display name.
+const APP_NAME: &str = "Vikui";
 
 /// The app's reverse-DNS identifier, shared with the macOS bundle and Linux desktop entry.
 const APP_ID: &str = "dev.bobman.vikui";

@@ -1,5 +1,5 @@
 //! App-wide actions and their key bindings: quitting, closing and arranging windows,
-//! and refreshing whatever the focused window shows.
+//! refreshing whatever the focused window shows and opening settings.
 //!
 //! These bindings have no context, so a view's own binding for the same keys wins.
 
@@ -16,6 +16,7 @@ gpui_kit::actions!(
         HideOthers,
         ShowAll,
         Refresh,
+        OpenSettings,
     ]
 );
 
@@ -28,6 +29,7 @@ fn bindings() -> Vec<(&'static str, Box<dyn Action>)> {
         bind("secondary-q", Quit),
         bind("secondary-w", CloseWindow),
         bind("secondary-r", Refresh),
+        bind("secondary-,", OpenSettings),
         // Minimizing and hiding are macOS conventions; elsewhere the window manager owns
         // those shortcuts.
         #[cfg(target_os = "macos")]
@@ -56,6 +58,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &Hide, cx| cx.hide());
     cx.on_action(|_: &HideOthers, cx| cx.hide_other_apps());
     cx.on_action(|_: &ShowAll, cx| cx.unhide_other_apps());
+    cx.on_action(|_: &OpenSettings, cx| crate::settings_window::open(cx));
     cx.on_action(|_: &Refresh, cx| {
         // Each list view has its own refresh action; only the focused one handles it.
         cx.dispatch_action(&projects_ui::Refresh);

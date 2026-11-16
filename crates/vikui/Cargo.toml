@@ -5,6 +5,7 @@ version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
+repository.workspace = true
 
 [dependencies]
 env_logger.workspace = true
@@ -18,6 +19,7 @@ reminder-details.workspace = true
 reminder-details-ui.workspace = true
 reminders.workspace = true
 reminders-ui.workspace = true
+settings-ui.workspace = true
 vikunja.workspace = true
 
 # Embeds the app icon in vikui.exe; only Windows hosts can compile the resource.

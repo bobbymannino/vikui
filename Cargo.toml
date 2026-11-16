@@ -8,6 +8,7 @@ version = "0.1.0"
 edition = "2024"
 rust-version = "1.100"
 publish = false
+repository = "https://github.com/bobbymannino/vikui"
 
 [workspace.dependencies]
 # Internal crates
@@ -19,6 +20,7 @@ reminder-details = { path = "crates/reminder-details" }
 reminder-details-ui = { path = "crates/reminder-details-ui" }
 reminders = { path = "crates/reminders" }
 reminders-ui = { path = "crates/reminders-ui" }
+settings-ui = { path = "crates/settings-ui" }
 vikunja = { path = "crates/vikunja" }
 
 # External crates
