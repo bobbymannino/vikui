@@ -47,6 +47,7 @@ struct Opened {
     handle: AnyWindowHandle,
     view: WeakEntity<RemindersView>,
     source: Source,
+    load: Rc<Loader>,
 }
 
 #[derive(Default)]
@@ -105,11 +106,6 @@ pub fn open(
             return;
         }
     };
-    cx.set_global(RemindersWindow(Some(Opened {
-        handle,
-        view: view.downgrade(),
-        source: source.clone(),
-    })));
     let tasks: Tasks = Rc::default();
     attach_details_panel(
         handle,
@@ -128,12 +124,30 @@ pub fn open(
         on_session_expired,
     });
     load.run(cx);
-    cx.subscribe(&view, move |_, event, cx| {
-        if *event == RemindersEvent::Refresh {
-            load.run(cx);
-        }
+    cx.set_global(RemindersWindow(Some(Opened {
+        handle,
+        view: view.downgrade(),
+        source: source.clone(),
+        load: Rc::clone(&load),
+    })));
+    cx.subscribe(&view, move |_, event, cx| match event {
+        RemindersEvent::Refresh => load.run(cx),
+        RemindersEvent::NewReminder => crate::new_reminder_window::open(cx),
+        _ => {}
     })
     .detach();
+}
+
+/// Reload the open reminders window, e.g. after adding a reminder it may list.
+pub fn reload(cx: &mut App) {
+    let load = cx
+        .try_global::<RemindersWindow>()
+        .and_then(|open| open.0.as_ref())
+        .filter(|opened| opened.view.upgrade().is_some())
+        .map(|opened| Rc::clone(&opened.load));
+    if let Some(load) = load {
+        load.run(cx);
+    }
 }
 
 /// One finished load: the list's reminders, their tasks and project titles by id.
@@ -291,7 +305,7 @@ fn attach_details_panel(
             RemindersEvent::OpenInBrowser { task_id } => {
                 task_window::open_in_browser(&server, *task_id, cx);
             }
-            RemindersEvent::Refresh => {}
+            RemindersEvent::Refresh | RemindersEvent::NewReminder => {}
         }
     })
     .detach();

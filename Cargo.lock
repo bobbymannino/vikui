@@ -8170,9 +8170,12 @@ version = "0.3.0"
 dependencies = [
  "env_logger",
  "gpui-kit",
+ "jiff 1.0.0",
  "log",
  "login",
  "login-ui",
+ "new-reminder",
+ "new-reminder-ui",
  "overview-ui",
  "preferences",
  "projects-ui",
