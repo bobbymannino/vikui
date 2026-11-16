@@ -117,6 +117,8 @@ pub enum RemindersEvent {
     OpenTask(Reminder),
     /// The user asked to open this task's page in the web browser.
     OpenInBrowser { task_id: i64 },
+    /// The user asked to add a new reminder.
+    NewReminder,
 }
 
 /// A titled, sortable list of reminders with an optional details panel.
@@ -563,6 +565,16 @@ impl Render for RemindersView {
                             .prefix(Icon::new(IconName::Search).text_color(theme.muted_foreground))
                             .cleanable(true)
                             .w(px(SEARCH_WIDTH)),
+                    )
+                    .child(
+                        Button::new("new-reminder")
+                            .primary()
+                            .icon(IconName::Plus)
+                            .label("New Reminder")
+                            .accessibility_label("New reminder")
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(RemindersEvent::NewReminder);
+                            })),
                     )
                     .child(
                         Button::new("refresh-reminders")
