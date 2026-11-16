@@ -1,4 +1,5 @@
-//! Opens a reminders window for a project, filter or search and fills it in.
+//! Opens the reminders window for a project, filter or search and fills it in. There is
+//! one at a time: opening another project replaces it.
 //!
 //! The window's details side panel is a [`ReminderDetailsView`], filled from the tasks
 //! loaded for the list. Marking a task done from the panel, the list or a task window
@@ -9,7 +10,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
-use gpui_kit::{AnyWindowHandle, App, AppContext as _, Entity, WeakEntity};
+use gpui_kit::{AnyWindowHandle, App, AppContext as _, Entity, Global, WeakEntity};
 use login::Session;
 use reminder_details::ReminderDetails;
 use reminder_details_ui::{ReminderDetailsEvent, ReminderDetailsView};
@@ -40,9 +41,25 @@ impl Loaded {
     }
 }
 
+/// The one open reminders window and what it lists, so opening another project replaces
+/// it instead of piling up windows.
+struct Opened {
+    handle: AnyWindowHandle,
+    view: WeakEntity<RemindersView>,
+    source: Source,
+}
+
+#[derive(Default)]
+struct RemindersWindow(Option<Opened>);
+
+impl Global for RemindersWindow {}
+
 /// Runs when the server rejects the session for good.
 type OnSessionExpired = Rc<dyn Fn(&mut App)>;
 
+/// Only one reminders window is open at a time: opening the source it already lists
+/// brings it to the front, and opening another replaces it in the same place.
+///
 /// `on_session_expired` runs if the server rejects the session for good.
 pub fn open(
     source: &Source,
@@ -50,9 +67,37 @@ pub fn open(
     on_session_expired: impl Fn(&mut App) + 'static,
     cx: &mut App,
 ) {
+    let previous = cx
+        .default_global::<RemindersWindow>()
+        .0
+        .take()
+        .filter(|opened| opened.view.upgrade().is_some());
+    let mut bounds = None;
+    if let Some(previous) = previous {
+        let same = previous.source == *source;
+        let alive = previous
+            .handle
+            .update(cx, |_, window, _| {
+                if same {
+                    window.activate_window();
+                } else {
+                    bounds = Some(window.window_bounds());
+                    window.remove_window();
+                }
+            })
+            .is_ok();
+        if same && alive {
+            cx.set_global(RemindersWindow(Some(previous)));
+            return;
+        }
+    }
+
     let on_session_expired: OnSessionExpired = Rc::new(on_session_expired);
     let title = source.title();
-    let options = crate::window_options(title.clone(), 1200., 560., cx);
+    let mut options = crate::window_options(title.clone(), 1200., 560., cx);
+    if bounds.is_some() {
+        options.window_bounds = bounds;
+    }
     let (handle, view) = match reminders_ui::open(options, title, None, cx) {
         Ok(opened) => opened,
         Err(err) => {
@@ -60,6 +105,11 @@ pub fn open(
             return;
         }
     };
+    cx.set_global(RemindersWindow(Some(Opened {
+        handle,
+        view: view.downgrade(),
+        source: source.clone(),
+    })));
     let tasks: Tasks = Rc::default();
     attach_details_panel(
         handle,
@@ -334,5 +384,72 @@ impl SaveTargets {
             cx,
         );
         self.tasks.borrow_mut().tasks.insert(id, task);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::TestAppContext;
+    use login::Credentials;
+    use vikunja::{ServerUrl, Token};
+
+    use super::*;
+
+    fn project(id: i64, title: &str) -> Source {
+        Source::Project {
+            id,
+            title: title.into(),
+            subproject_ids: Vec::new(),
+        }
+    }
+
+    /// Background work never runs (the test doesn't park), so nothing is requested.
+    fn session() -> Arc<Session> {
+        Arc::new(Session::new(Credentials {
+            server: ServerUrl::parse("http://127.0.0.1:9").unwrap(),
+            username: "test".into(),
+            password: "test".into(),
+            token: Token::new("test"),
+            refresh_token: None,
+        }))
+    }
+
+    /// The open windows, and the source the reminders window lists.
+    fn state(cx: &mut TestAppContext) -> (Vec<AnyWindowHandle>, Option<Source>) {
+        cx.update(|cx| {
+            let source = cx
+                .try_global::<RemindersWindow>()
+                .and_then(|open| open.0.as_ref())
+                .map(|opened| opened.source.clone());
+            (cx.windows(), source)
+        })
+    }
+
+    #[gpui_kit::test]
+    fn keeps_one_reminders_window_open(cx: &mut TestAppContext) {
+        let session = session();
+        let open_source = |source: Source, cx: &mut TestAppContext| {
+            let session = Arc::clone(&session);
+            cx.update(|cx| open(&source, session, |_| {}, cx));
+        };
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            reminders_ui::init(cx);
+        });
+
+        open_source(project(1, "Home"), cx);
+        let (first, _) = state(cx);
+        open_source(project(1, "Home"), cx);
+        assert_eq!(
+            state(cx),
+            (first.clone(), Some(project(1, "Home"))),
+            "reopening reuses it"
+        );
+
+        open_source(project(2, "Work"), cx);
+        let (windows, source) = state(cx);
+        assert_eq!(windows.len(), 1, "another project replaces the window");
+        assert_ne!(windows, first);
+        assert_eq!(source, Some(project(2, "Work")));
     }
 }
