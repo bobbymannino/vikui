@@ -87,6 +87,7 @@ libfontconfig-dev libfreetype-dev pkg-config`).
 | `Enter`           | Open a project / toggle reminder details |
 | `Escape`          | Close reminder details                   |
 | `T`               | Mark the selected task done or not done  |
+| `Mod+,`           | Open settings                            |
 | `Mod+W`           | Close window                             |
 | `Mod+Q`           | Quit                                     |
 | `Cmd+M`           | Minimize window (macOS)                  |
