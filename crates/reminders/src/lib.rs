@@ -4,6 +4,8 @@
 //! [`Reminder`]s with [`from_tasks`], and hand those to a view. Every task is listed,
 //! whether or not it has a reminder set.
 
+use std::collections::BTreeSet;
+
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use vikunja::{Client, Error, RelativeReminder, RelativeTo, Repeat, Task, TaskQuery, Token};
@@ -90,6 +92,7 @@ impl Reminder {
 /// A label on a reminder's task.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct TaskLabel {
+    pub id: i64,
     pub title: String,
     /// `0xRRGGBB`, or `None` when the label has no colour.
     pub rgb: Option<u32>,
@@ -246,6 +249,7 @@ pub fn from_tasks(tasks: &[Task]) -> Vec<Reminder> {
                     .labels
                     .iter()
                     .map(|label| TaskLabel {
+                        id: label.id,
                         title: label.title.clone(),
                         rgb: label.rgb(),
                     })
@@ -312,6 +316,63 @@ impl Search {
     pub fn matches(&self, title: &str) -> bool {
         self.is_empty() || self.matches_normalized(&normalize(title))
     }
+}
+
+/// Which labels a reminder's task must all have; none selected matches everything.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct LabelFilter {
+    selected: BTreeSet<i64>,
+}
+
+impl LabelFilter {
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.selected.is_empty()
+    }
+
+    #[must_use]
+    pub fn is_selected(&self, label_id: i64) -> bool {
+        self.selected.contains(&label_id)
+    }
+
+    /// Select `label_id` if it isn't, or deselect it if it is.
+    pub fn toggle(&mut self, label_id: i64) {
+        if !self.selected.remove(&label_id) {
+            self.selected.insert(label_id);
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.selected.clear();
+    }
+
+    /// Keep only the selected labels in `labels`, e.g. after a reload removed some, so a
+    /// label that is no longer listed can't hide everything.
+    pub fn retain_in(&mut self, labels: &[TaskLabel]) {
+        self.selected
+            .retain(|id| labels.iter().any(|label| label.id == *id));
+    }
+
+    /// Whether `reminder`'s task has every selected label.
+    #[must_use]
+    pub fn matches(&self, reminder: &Reminder) -> bool {
+        self.selected
+            .iter()
+            .all(|id| reminder.task_labels.iter().any(|label| label.id == *id))
+    }
+}
+
+/// Every label on `reminders`' tasks, once each, sorted by title ignoring case.
+#[must_use]
+pub fn labels_in(reminders: &[Reminder]) -> Vec<TaskLabel> {
+    let mut labels: Vec<TaskLabel> = Vec::new();
+    for label in reminders.iter().flat_map(|reminder| &reminder.task_labels) {
+        if !labels.iter().any(|seen| seen.id == label.id) {
+            labels.push(label.clone());
+        }
+    }
+    labels.sort_by_cached_key(|label| (label.title.to_lowercase(), label.id));
+    labels
 }
 
 /// Where a list of reminders came from; gives the window its title and the tasks query.
@@ -626,5 +687,66 @@ mod tests {
         };
         assert_eq!(saved.title(), "Reminders – This week");
         assert_eq!(saved.direct_query(), None);
+    }
+
+    fn label(id: i64, title: &str) -> TaskLabel {
+        TaskLabel {
+            id,
+            title: title.into(),
+            rgb: None,
+        }
+    }
+
+    fn labelled(labels: &[TaskLabel]) -> Reminder {
+        let mut reminder = from_tasks(&[task(1, "Pay rent", Vec::new())]).remove(0);
+        reminder.task_labels = labels.to_vec();
+        reminder
+    }
+
+    #[test]
+    fn label_filter_needs_every_selected_label() {
+        let (bills, home, work) = (label(1, "Bills"), label(2, "Home"), label(3, "Work"));
+        let both = labelled(&[bills.clone(), home.clone()]);
+        let only_bills = labelled(std::slice::from_ref(&bills));
+        let none = labelled(&[]);
+
+        let mut filter = LabelFilter::default();
+        assert!(filter.is_empty());
+        assert!(
+            [&both, &only_bills, &none]
+                .iter()
+                .all(|r| filter.matches(r))
+        );
+
+        filter.toggle(bills.id);
+        assert!(filter.is_selected(bills.id));
+        assert!(filter.matches(&both) && filter.matches(&only_bills) && !filter.matches(&none));
+
+        filter.toggle(home.id);
+        assert!(filter.matches(&both));
+        assert!(!filter.matches(&only_bills), "labels are ANDed");
+
+        filter.toggle(home.id);
+        assert!(!filter.is_selected(home.id), "toggling again deselects");
+        assert!(filter.matches(&only_bills));
+
+        filter.toggle(work.id);
+        filter.retain_in(&[bills.clone(), home]);
+        assert!(!filter.is_selected(work.id) && filter.is_selected(bills.id));
+        filter.clear();
+        assert!(filter.is_empty());
+    }
+
+    #[test]
+    fn lists_each_label_once_by_title() {
+        let reminders = [
+            labelled(&[label(2, "home"), label(1, "Bills")]),
+            labelled(&[label(1, "Bills"), label(3, "Work")]),
+        ];
+        let titles: Vec<_> = labels_in(&reminders)
+            .into_iter()
+            .map(|label| label.title)
+            .collect();
+        assert_eq!(titles, ["Bills", "home", "Work"]);
     }
 }
