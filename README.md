@@ -104,6 +104,7 @@ Vikui must be able to write to the folder it is installed in. On macOS, move
 | `Enter`           | Open a project / toggle reminder details |
 | `Mod+Enter`       | Open the selected task in its own window |
 | `Mod+O`           | Open the selected task in the browser    |
+| `Mod+E`           | Edit the selected task                   |
 | `Escape`          | Close reminder details                   |
 | `T`               | Mark the selected task done or not done  |
 | `Mod+,`           | Open settings                            |
