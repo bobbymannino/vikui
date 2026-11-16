@@ -1,5 +1,6 @@
 //! A window showing one task, opened from a reminders window by double clicking a row,
-//! pressing Cmd/Ctrl+Enter on it, or the details panel's "Open in new window" button.
+//! pressing Cmd/Ctrl+Enter on it, its context menu, or the details panel's "Open in new
+//! window" button. Also opens a task's page in the web browser.
 //!
 //! Each task gets at most one window; opening it again brings that window to the front.
 //! The window asks its reminders window to save changes, and is updated when they land.
@@ -11,7 +12,7 @@ use gpui_kit::{AnyWindowHandle, App, AppContext as _, Global, WeakEntity};
 use reminder_details::ReminderDetails;
 use reminder_details_ui::{ReminderDetailsEvent, ReminderDetailsView};
 use reminders::Reminder;
-use vikunja::Task;
+use vikunja::{ServerUrl, Task};
 
 /// Saves a task done (or not done): `(task_id, done)`.
 pub type SetDone = Rc<dyn Fn(i64, bool, &mut App)>;
@@ -30,8 +31,15 @@ struct TaskWindows(HashMap<i64, Opened>);
 impl Global for TaskWindows {}
 
 /// Show `details` (of `reminder` and its task) in a window of its own, or bring the
-/// task's window to the front if it is already open. `set_done` saves the task.
-pub fn open(reminder: &Reminder, details: &ReminderDetails, set_done: SetDone, cx: &mut App) {
+/// task's window to the front if it is already open. `set_done` saves the task; `server`
+/// hosts its web page.
+pub fn open(
+    reminder: &Reminder,
+    details: &ReminderDetails,
+    server: ServerUrl,
+    set_done: SetDone,
+    cx: &mut App,
+) {
     let task_id = reminder.task_id;
     let windows = &mut cx.default_global::<TaskWindows>().0;
     windows.retain(|_, opened| opened.view.upgrade().is_some());
@@ -55,10 +63,10 @@ pub fn open(reminder: &Reminder, details: &ReminderDetails, set_done: SetDone, c
         Ok(opened) => opened,
         Err(err) => return log::error!("failed to open task window: {err:#}"),
     };
-    cx.subscribe(&view, move |_, event, cx| {
-        if let ReminderDetailsEvent::SetDone { task_id, done } = *event {
-            set_done(task_id, done, cx);
-        }
+    cx.subscribe(&view, move |_, event, cx| match *event {
+        ReminderDetailsEvent::SetDone { task_id, done } => set_done(task_id, done, cx),
+        ReminderDetailsEvent::OpenInBrowser { task_id } => open_in_browser(&server, task_id, cx),
+        ReminderDetailsEvent::Close | ReminderDetailsEvent::OpenInWindow { .. } => {}
     })
     .detach();
     cx.default_global::<TaskWindows>().0.insert(
@@ -69,6 +77,11 @@ pub fn open(reminder: &Reminder, details: &ReminderDetails, set_done: SetDone, c
             reminder: reminder.clone(),
         },
     );
+}
+
+/// Open `task_id`'s page on `server` in the default web browser.
+pub fn open_in_browser(server: &ServerUrl, task_id: i64, cx: &App) {
+    cx.open_url(server.task_page(task_id).as_str());
 }
 
 /// Show `task` as saved in its window, if one is open. `details` builds the window's
@@ -140,8 +153,9 @@ mod tests {
         cx.update(|cx| {
             gpui_kit::init(cx);
             let info = details(&reminder, &task(false));
-            open(&reminder, &info, Rc::clone(&set_done), cx);
-            open(&reminder, &info, Rc::clone(&set_done), cx);
+            let server = ServerUrl::parse("https://tasks.example.com").unwrap();
+            open(&reminder, &info, server.clone(), Rc::clone(&set_done), cx);
+            open(&reminder, &info, server, Rc::clone(&set_done), cx);
         });
         let handle = cx.update(|cx| {
             assert_eq!(cx.windows().len(), 1, "opening again reuses the window");
@@ -165,6 +179,15 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         assert_eq!(*saves.borrow(), [(7, true)]);
+
+        cx.update_window(handle, |_, window, cx| {
+            window.click("open-task-in-browser", cx)
+        })
+        .unwrap();
+        assert_eq!(
+            cx.opened_url().as_deref(),
+            Some("https://tasks.example.com/tasks/7")
+        );
 
         cx.update(|cx| saved(&task(true), details, cx));
         assert!(has_label(cx, "Status: Done"));
