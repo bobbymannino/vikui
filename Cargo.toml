@@ -15,6 +15,7 @@ repository = "https://github.com/bobbymannino/vikui"
 login = { path = "crates/login" }
 login-ui = { path = "crates/login-ui" }
 overview-ui = { path = "crates/overview-ui" }
+preferences = { path = "crates/preferences" }
 projects-ui = { path = "crates/projects-ui" }
 reminder-details = { path = "crates/reminder-details" }
 reminder-details-ui = { path = "crates/reminder-details-ui" }
@@ -33,6 +34,7 @@ keyring = "4.2.0"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+tempfile = "3.27.0"
 thiserror = "2"
 ureq = { version = "3", features = ["json", "platform-verifier"] }
 url = "2"
