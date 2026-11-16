@@ -107,6 +107,7 @@ pub type OnRowClick = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 /// What a row's context menu offers.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowCommand {
+    Edit,
     OpenInWindow,
     OpenInBrowser,
 }
@@ -269,22 +270,24 @@ impl TableDelegate for RemindersTable {
         let Some(on_command) = self.on_row_command.clone() else {
             return menu;
         };
-        let item = |label: &'static str, icon: IconName, command: RowCommand| {
+        let item = |label: &'static str, icon: Option<IconName>, command: RowCommand| {
             let on_command = Rc::clone(&on_command);
             PopupMenuItem::new(label)
-                .icon(icon)
+                .when_some(icon, PopupMenuItem::icon)
                 .on_click(move |_, window, cx| on_command(row_ix, command, window, cx))
         };
-        menu.item(item(
-            "Open in new window",
-            IconName::ExternalLink,
-            RowCommand::OpenInWindow,
-        ))
-        .item(item(
-            "Open in browser",
-            IconName::Globe,
-            RowCommand::OpenInBrowser,
-        ))
+        menu.item(item("Edit…", None, RowCommand::Edit))
+            .separator()
+            .item(item(
+                "Open in new window",
+                Some(IconName::ExternalLink),
+                RowCommand::OpenInWindow,
+            ))
+            .item(item(
+                "Open in browser",
+                Some(IconName::Globe),
+                RowCommand::OpenInBrowser,
+            ))
     }
 
     fn render_td(

@@ -5,6 +5,7 @@ mod app_actions;
 mod app_menu;
 mod app_preferences;
 mod app_session;
+mod edit_task_window;
 mod new_reminder_window;
 mod reminders_window;
 mod settings_window;

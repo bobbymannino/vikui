@@ -32,6 +32,8 @@ pub enum ReminderDetailsEvent {
     OpenInWindow { task_id: i64 },
     /// The user asked to open the task's page in the web browser.
     OpenInBrowser { task_id: i64 },
+    /// The user asked to edit the task.
+    Edit { task_id: i64 },
 }
 
 /// One labelled value, e.g. "Due" / "Tue 1 Dec 2026, 09:00".
@@ -282,6 +284,20 @@ impl Render for ReminderDetailsView {
                             )
                         },
                     ),
+            )
+            .child(
+                Button::new("edit-task")
+                    .label("Edit")
+                    .ghost()
+                    .xsmall()
+                    .accessibility_label("Edit task")
+                    .tooltip("Edit task")
+                    .disabled(self.task.is_none())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(task) = this.task {
+                            cx.emit(ReminderDetailsEvent::Edit { task_id: task.id });
+                        }
+                    })),
             )
             .child(
                 Button::new("open-task-in-browser")
@@ -667,6 +683,8 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.find_by_label("Open in browser");
             window.click("open-task-in-browser", cx);
+            window.find_by_label("Edit task");
+            window.click("edit-task", cx);
         })
         .unwrap();
         cx.run_until_parked();
@@ -675,6 +693,7 @@ mod tests {
             [
                 ReminderDetailsEvent::OpenInWindow { task_id: 7 },
                 ReminderDetailsEvent::OpenInBrowser { task_id: 7 },
+                ReminderDetailsEvent::Edit { task_id: 7 },
             ]
         );
 
@@ -687,6 +706,7 @@ mod tests {
             assert!(window.try_find_by_label("Open in new window").is_none());
             assert!(window.try_find_by_label("Close details").is_none());
             window.find_by_label("Open in browser");
+            window.find_by_label("Edit task");
         })
         .unwrap();
     }

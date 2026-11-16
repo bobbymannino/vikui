@@ -305,6 +305,7 @@ fn attach_details_panel(
             RemindersEvent::OpenInBrowser { task_id } => {
                 task_window::open_in_browser(&server, *task_id, cx);
             }
+            RemindersEvent::EditTask { task_id } => crate::edit_task_window::open(*task_id, cx),
             RemindersEvent::Refresh | RemindersEvent::NewReminder => {}
         }
     })
@@ -323,6 +324,7 @@ fn attach_details_panel(
                 .ok();
         }
         ReminderDetailsEvent::SetDone { task_id, done } => set_done(task_id, done, cx),
+        ReminderDetailsEvent::Edit { task_id } => crate::edit_task_window::open(task_id, cx),
         ReminderDetailsEvent::OpenInBrowser { task_id } => {
             task_window::open_in_browser(&server, task_id, cx);
         }
