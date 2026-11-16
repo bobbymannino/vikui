@@ -30,7 +30,7 @@ pub fn open(cx: &mut App) {
     let title = format!("Settings – {}", crate::APP_NAME);
     let options = crate::window_options(title, 480., 320., cx);
     match settings_ui::open(options, about(), cx) {
-        Ok(handle) => cx.set_global(SettingsWindow(Some(handle))),
+        Ok((handle, _)) => cx.set_global(SettingsWindow(Some(handle))),
         Err(err) => log::error!("failed to open settings window: {err:#}"),
     }
 }
