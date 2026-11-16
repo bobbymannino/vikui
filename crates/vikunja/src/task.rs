@@ -100,6 +100,16 @@ pub struct Task {
     /// `null` when the task has none.
     #[serde(default, deserialize_with = "null_as_empty")]
     pub reminders: Vec<TaskReminder>,
+    /// `null` when the task has none.
+    #[serde(default, deserialize_with = "null_as_empty")]
+    pub labels: Vec<Label>,
+    /// Seconds between repeats; `0` when the task does not repeat by interval.
+    #[serde(default)]
+    pub repeat_after: i64,
+    /// `0` repeats `repeat_after` from the task's dates, `1` monthly, `2` from when it
+    /// was marked done. See [`Task::repeat`].
+    #[serde(default)]
+    pub repeat_mode: i64,
 }
 
 impl Task {
@@ -108,6 +118,42 @@ impl Task {
     pub fn plain_description(&self) -> String {
         crate::project::html_to_plain_text(&self.description)
     }
+
+    /// How the task (and so its reminders) repeats, or `None` if it does not.
+    #[must_use]
+    pub fn repeat(&self) -> Option<Repeat> {
+        let every_secs = u64::try_from(self.repeat_after)
+            .ok()
+            .filter(|&secs| secs > 0);
+        match self.repeat_mode {
+            1 => Some(Repeat::Monthly),
+            2 => every_secs.map(|every_secs| Repeat::Every {
+                every_secs,
+                from_done: true,
+            }),
+            _ => every_secs.map(|every_secs| Repeat::Every {
+                every_secs,
+                from_done: false,
+            }),
+        }
+    }
+}
+
+/// A label on a task.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct Label {
+    pub id: i64,
+    pub title: String,
+}
+
+/// How a task repeats.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Repeat {
+    /// Every `every_secs`, counted from the task's dates or, if `from_done`, from when it
+    /// was marked done.
+    Every { every_secs: u64, from_done: bool },
+    /// On the same day every month.
+    Monthly,
 }
 
 /// One reminder on a task.
@@ -229,9 +275,51 @@ mod tests {
     }
 
     #[test]
-    fn null_reminders_mean_none() {
-        let task: Task = serde_json::from_str(r#"{"id":1,"title":"x","reminders":null}"#).unwrap();
+    fn null_reminders_and_labels_mean_none() {
+        let task: Task =
+            serde_json::from_str(r#"{"id":1,"title":"x","reminders":null,"labels":null}"#).unwrap();
         assert_eq!(task.reminders, []);
+        assert_eq!(task.labels, []);
+        assert_eq!(task.repeat(), None);
+    }
+
+    #[test]
+    fn deserializes_labels_and_repeats() {
+        let json = r#"{"id":1,"title":"x","repeat_after":604800,"repeat_mode":0,
+            "labels":[{"id":2,"title":"Bills","hex_color":"ff0000"}]}"#;
+        let task: Task = serde_json::from_str(json).unwrap();
+        assert_eq!(
+            task.labels,
+            [Label {
+                id: 2,
+                title: "Bills".into()
+            }]
+        );
+        assert_eq!(
+            task.repeat(),
+            Some(Repeat::Every {
+                every_secs: 604_800,
+                from_done: false
+            })
+        );
+        let repeat = |repeat_after, repeat_mode| {
+            Task {
+                repeat_after,
+                repeat_mode,
+                ..Task::default()
+            }
+            .repeat()
+        };
+        assert_eq!(repeat(0, 1), Some(Repeat::Monthly));
+        assert_eq!(
+            repeat(86_400, 2),
+            Some(Repeat::Every {
+                every_secs: 86_400,
+                from_done: true
+            })
+        );
+        assert_eq!(repeat(0, 2), None);
+        assert_eq!(repeat(-5, 0), None);
     }
 
     #[test]

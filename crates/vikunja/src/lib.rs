@@ -19,7 +19,8 @@ pub use error::Error;
 pub use project::{Project, ProjectKind};
 pub use server_url::{ServerUrl, ServerUrlError};
 pub use task::{
-    RelativeReminder, RelativeTo, SavedFilter, SavedQuery, Task, TaskQuery, TaskReminder,
+    Label, RelativeReminder, RelativeTo, Repeat, SavedFilter, SavedQuery, Task, TaskQuery,
+    TaskReminder,
 };
 
 const TIMEOUT: Duration = Duration::from_secs(20);
