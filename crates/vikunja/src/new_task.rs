@@ -23,17 +23,7 @@ pub struct NewTask {
 impl NewTask {
     /// The body of `PUT /projects/{id}/tasks`; labels are attached separately.
     pub(crate) fn to_json(&self) -> Value {
-        let (repeat_after, repeat_mode) = match self.repeat {
-            None => (0, 0),
-            Some(Repeat::Monthly) => (0, 1),
-            Some(Repeat::Every {
-                every_secs,
-                from_done,
-            }) => (
-                i64::try_from(every_secs).unwrap_or(i64::MAX),
-                if from_done { 2 } else { 0 },
-            ),
-        };
+        let (repeat_after, repeat_mode) = crate::task_update::repeat_fields(self.repeat);
         let reminders: Vec<Value> = self
             .reminders
             .iter()
