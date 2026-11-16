@@ -181,7 +181,7 @@ mod tests {
         assert_eq!(*saves.borrow(), [(7, true)]);
 
         cx.update_window(handle, |_, window, cx| {
-            window.click("open-task-in-browser", cx)
+            window.click("open-task-in-browser", cx);
         })
         .unwrap();
         assert_eq!(
