@@ -270,6 +270,50 @@ pub fn from_tasks(tasks: &[Task]) -> Vec<Reminder> {
     reminders
 }
 
+/// `text` lowercased with everything but `a-z` and `0-9` removed, so "Pay-Rent!" and
+/// "pay rent" both become "payrent". Accented and non-Latin letters are removed too.
+#[must_use]
+pub fn normalize(text: &str) -> String {
+    text.chars()
+        .map(|c| c.to_ascii_lowercase())
+        .filter(char::is_ascii_alphanumeric)
+        .collect()
+}
+
+/// A search over reminder titles, ignoring case, spaces and punctuation.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Search {
+    /// [`normalize`]d query; empty matches everything.
+    query: String,
+}
+
+impl Search {
+    #[must_use]
+    pub fn new(query: &str) -> Self {
+        Self {
+            query: normalize(query),
+        }
+    }
+
+    /// Whether the query has anything left to match on; "" and "!?" do not.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.query.is_empty()
+    }
+
+    /// Whether `key`, already [`normalize`]d, contains the query.
+    #[must_use]
+    pub fn matches_normalized(&self, key: &str) -> bool {
+        key.contains(&self.query)
+    }
+
+    /// Whether `title` contains the query, both normalized.
+    #[must_use]
+    pub fn matches(&self, title: &str) -> bool {
+        self.is_empty() || self.matches_normalized(&normalize(title))
+    }
+}
+
 /// Where a list of reminders came from; gives the window its title and the tasks query.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Source {
@@ -505,6 +549,27 @@ mod tests {
         };
         assert_eq!(named.task_reference(), "HOME-3");
         assert_eq!(Priority::from_level(0), None);
+    }
+
+    #[test]
+    fn normalizes_to_lowercase_letters_and_digits() {
+        assert_eq!(normalize("Pay-Rent! (Flat 2B)"), "payrentflat2b");
+        assert_eq!(normalize("  "), "");
+        assert_eq!(normalize("Café über"), "cafber");
+    }
+
+    #[test]
+    fn searches_ignoring_case_spaces_and_punctuation() {
+        let search = Search::new("pay rent");
+        assert!(search.matches("Pay-Rent!"));
+        assert!(search.matches("Remember to PAYRENT today"));
+        assert!(!search.matches("Pay the bills"));
+        assert!(Search::new("2b").matches("Flat 2-B"));
+
+        let empty = Search::new("?!");
+        assert!(empty.is_empty());
+        assert!(empty.matches("anything"));
+        assert!(Search::default().matches(""));
     }
 
     #[test]
