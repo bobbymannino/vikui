@@ -5,9 +5,10 @@ use std::rc::Rc;
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
+use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::{
-    App, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, Role,
+    App, Context, Div, Hsla, InteractiveElement as _, IntoElement, ParentElement as _, Role,
     SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,
     prelude::FluentBuilder as _,
 };
@@ -24,7 +25,10 @@ pub struct ReminderRow {
     pub priority_label: SharedString,
     due_at: Option<Timestamp>,
     pub due: SharedString,
+    /// The labels as one line: the cell's accessible name and sort key.
     pub labels: SharedString,
+    /// The labels as drawn, one tag each.
+    label_tags: Vec<LabelTag>,
     /// Fired already, not scheduled, or its task is done: drawn muted (the details panel
     /// says which). Tasks without a reminder are not muted unless done.
     pub inactive: bool,
@@ -48,11 +52,51 @@ impl ReminderRow {
                 due_at: reminder.task_due,
                 due: reminder.due(zone).into(),
                 labels: reminder.labels().into(),
+                label_tags: reminder
+                    .task_labels
+                    .iter()
+                    .map(|label| LabelTag {
+                        title: label.title.clone().into(),
+                        rgb: label.rgb,
+                    })
+                    .collect(),
                 inactive: reminder.status(now).is_inactive(),
                 is_set: reminder.is_set,
                 order,
             })
             .collect()
+    }
+}
+
+/// One label, ready to draw as a tag.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct LabelTag {
+    title: SharedString,
+    /// `0xRRGGBB`; `None` draws the theme's neutral tag.
+    rgb: Option<u32>,
+}
+
+impl LabelTag {
+    /// A faint fill of the label's colour with the colour as text, its lightness pushed
+    /// away from the background so the text stays readable in light and dark themes.
+    fn render(&self, cx: &App) -> Tag {
+        let tag = match self.rgb {
+            Some(rgb) => {
+                let color: Hsla = gpui_kit::rgb(rgb).into();
+                let fill = color.opacity(0.18);
+                let text = Hsla {
+                    l: if cx.theme().is_dark() {
+                        color.l.max(0.72)
+                    } else {
+                        color.l.min(0.38)
+                    },
+                    ..color
+                };
+                Tag::custom(fill, text, fill)
+            }
+            None => Tag::secondary(),
+        };
+        tag.child(self.title.clone())
     }
 }
 
@@ -231,8 +275,20 @@ impl TableDelegate for RemindersTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
+        let row = self.rows.get(row_ix);
+        let inactive = row.is_some_and(|row| row.inactive);
+        if Col::at(col_ix) == Some(Col::Labels) {
+            let tags = row.map_or(&[][..], |row| row.label_tags.as_slice());
+            return h_flex()
+                .w_full()
+                .gap_1()
+                .overflow_hidden()
+                // Muted rows fade their tags rather than recolouring them.
+                .when(inactive, |cell| cell.opacity(0.6))
+                .children(tags.iter().map(|tag| tag.render(cx)))
+                .into_any_element();
+        }
         let text = self.cell(row_ix, col_ix).cloned().unwrap_or_default();
-        let inactive = self.rows.get(row_ix).is_some_and(|row| row.inactive);
         div()
             .w_full()
             .truncate()
@@ -240,6 +296,7 @@ impl TableDelegate for RemindersTable {
                 cell.text_color(cx.theme().muted_foreground)
             })
             .child(text)
+            .into_any_element()
     }
 
     fn cell_label(&self, row_ix: usize, col_ix: usize, _: &App) -> Option<SharedString> {
@@ -305,7 +362,16 @@ mod tests {
                     task_identifier: "HOME-7".into(),
                     task_priority: Some(Priority::Urgent),
                     task_due: Some("2026-12-01T09:00:00Z".parse().unwrap()),
-                    task_labels: vec!["Bills".into(), "Home".into()],
+                    task_labels: vec![
+                        reminders::TaskLabel {
+                            title: "Bills".into(),
+                            rgb: Some(0xff_00_00),
+                        },
+                        reminders::TaskLabel {
+                            title: "Home".into(),
+                            rgb: None,
+                        },
+                    ],
                     ..reminder("2026-12-01T08:00:00Z", "Pay rent", false)
                 },
                 Reminder {
@@ -333,6 +399,19 @@ mod tests {
             ]
         );
         assert_eq!(cells(&rows[1]), ["#9", "Plain", "", "", ""]);
+        assert_eq!(
+            rows[0].label_tags,
+            [
+                LabelTag {
+                    title: "Bills".into(),
+                    rgb: Some(0xff_00_00)
+                },
+                LabelTag {
+                    title: "Home".into(),
+                    rgb: None
+                },
+            ]
+        );
     }
 
     #[test]

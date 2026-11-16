@@ -481,8 +481,20 @@ mod tests {
         let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
         let handle = cx.update(|cx| {
             gpui_kit::init(cx);
-            let reminders = vec![reminder(soon, "Pay rent")];
-            open(options(), "Reminders – Home", Some(reminders), cx)
+            let labelled = Reminder {
+                task_labels: vec![
+                    reminders::TaskLabel {
+                        title: "Bills".into(),
+                        rgb: Some(0x19_73_ff),
+                    },
+                    reminders::TaskLabel {
+                        title: "Home".into(),
+                        rgb: None,
+                    },
+                ],
+                ..reminder(soon, "Pay rent")
+            };
+            open(options(), "Reminders – Home", Some(vec![labelled]), cx)
                 .unwrap()
                 .0
         });
@@ -491,6 +503,7 @@ mod tests {
             window.find_by_label("Reminders");
             window.find_by_label("Pay rent");
             window.find_by_label("HOME-1");
+            window.find_by_label("Bills, Home");
         })
         .unwrap();
     }

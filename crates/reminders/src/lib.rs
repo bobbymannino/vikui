@@ -21,8 +21,8 @@ pub struct Reminder {
     pub task_identifier: String,
     pub task_priority: Option<Priority>,
     pub task_due: Option<Timestamp>,
-    /// Label titles, in the task's order.
-    pub task_labels: Vec<String>,
+    /// The task's labels, in its order.
+    pub task_labels: Vec<TaskLabel>,
     pub project_id: i64,
     pub task_done: bool,
     /// `false` for a task listed without any reminder set on it.
@@ -50,7 +50,11 @@ impl Reminder {
     /// The task's labels as one line, e.g. "Bills, Home"; empty when it has none.
     #[must_use]
     pub fn labels(&self) -> String {
-        self.task_labels.join(", ")
+        self.task_labels
+            .iter()
+            .map(|label| label.title.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     /// "1 hour before due date", or `None` for reminders set at a fixed time.
@@ -81,6 +85,14 @@ impl Reminder {
             None => "No time set",
         })
     }
+}
+
+/// A label on a reminder's task.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TaskLabel {
+    pub title: String,
+    /// `0xRRGGBB`, or `None` when the label has no colour.
+    pub rgb: Option<u32>,
 }
 
 /// Vikunja's task priority levels.
@@ -239,7 +251,10 @@ pub fn from_tasks(tasks: &[Task]) -> Vec<Reminder> {
                 task_labels: task
                     .labels
                     .iter()
-                    .map(|label| label.title.clone())
+                    .map(|label| TaskLabel {
+                        title: label.title.clone(),
+                        rgb: label.rgb(),
+                    })
                     .collect(),
                 project_id: task.project_id,
                 task_done: task.done,
@@ -468,10 +483,12 @@ mod tests {
                 vikunja::Label {
                     id: 1,
                     title: "Bills".into(),
+                    hex_color: "ff0000".into(),
                 },
                 vikunja::Label {
                     id: 2,
                     title: "Home".into(),
+                    hex_color: String::new(),
                 },
             ],
             ..task(12, "Pay rent", vec![])
@@ -479,6 +496,8 @@ mod tests {
         let reminder = &from_tasks(&tasks)[0];
         assert_eq!(reminder.task_priority, Some(Priority::Urgent));
         assert_eq!(reminder.labels(), "Bills, Home");
+        assert_eq!(reminder.task_labels[0].rgb, Some(0xff_00_00));
+        assert_eq!(reminder.task_labels[1].rgb, None);
         assert_eq!(reminder.due(&TimeZone::UTC), "");
         let due = Reminder {
             task_due: Some(ts("2026-12-01T09:00:00Z")),
