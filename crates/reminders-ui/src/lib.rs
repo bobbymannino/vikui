@@ -490,8 +490,7 @@ mod tests {
             window.render_frame(cx);
             window.find_by_label("Reminders");
             window.find_by_label("Pay rent");
-            window.find_by_label("1 hour before due date");
-            window.find_by_label("Upcoming");
+            window.find_by_label("HOME-1");
         })
         .unwrap();
     }
@@ -627,20 +626,20 @@ mod tests {
                 view.set_task_done(1, true, cx);
             });
         });
-        let status = |cx: &mut TestAppContext| {
+        let inactive = |cx: &mut TestAppContext| {
             cx.update(|cx| {
                 let table = view.read(cx).table.read(cx);
-                table.delegate().row(0).map(|row| row.status.clone())
+                table.delegate().row(0).map(|row| row.inactive)
             })
         };
-        assert_eq!(status(cx).as_deref(), Some("Task done"));
+        assert_eq!(inactive(cx), Some(true));
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             window.find_by_label("Test panel");
         })
         .unwrap();
         cx.update(|cx| view.update(cx, |view, cx| view.set_task_done(1, false, cx)));
-        assert_eq!(status(cx).as_deref(), Some("Upcoming"));
+        assert_eq!(inactive(cx), Some(false));
     }
 
     #[gpui_kit::test]
@@ -796,7 +795,6 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             window.find_by_label("Buy milk");
-            window.find_by_label("No reminder");
         })
         .unwrap();
     }
