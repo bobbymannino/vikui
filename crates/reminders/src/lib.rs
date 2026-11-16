@@ -129,7 +129,7 @@ impl Reminder {
 /// "Tue 1 Dec 2026, 09:00" in `zone`.
 #[must_use]
 pub fn format_time(at: Timestamp, zone: &TimeZone) -> String {
-    at.to_zoned(zone.clone())
+    at.to_zoned_datetime(zone.clone())
         .strftime("%a %-d %b %Y, %H:%M")
         .to_string()
 }
