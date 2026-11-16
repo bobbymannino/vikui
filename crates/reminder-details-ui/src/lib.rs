@@ -28,6 +28,8 @@ pub enum ReminderDetailsEvent {
     /// [`ReminderDetailsView::set_details`] with the result or
     /// [`ReminderDetailsView::set_error`].
     SetDone { task_id: i64, done: bool },
+    /// The user asked to open the task in a window of its own.
+    OpenInWindow { task_id: i64 },
 }
 
 /// One labelled value, e.g. "Due" / "Tue 1 Dec 2026, 09:00".
@@ -126,11 +128,23 @@ pub struct ReminderDetailsView {
     /// A done/not-done change is being saved.
     saving: bool,
     error: Option<SharedString>,
+    /// Shown as a window's whole content, not a side panel: no close or open-in-window
+    /// buttons (the window has its own close).
+    in_window: bool,
 }
 
 impl ReminderDetailsView {
+    /// A side panel, with buttons to close it and to open the task in its own window.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The content of a window showing one task.
+    pub fn new_window() -> Self {
+        Self {
+            in_window: true,
+            ..Self::default()
+        }
     }
 
     /// Show `details`, replacing whatever was shown, and end any pending save.
@@ -238,13 +252,20 @@ impl Render for ReminderDetailsView {
                 v_flex()
                     .flex_1()
                     .min_w_0()
-                    .child(
-                        div().text_lg().font_weight(FontWeight::SEMIBOLD).child(
-                            self.content
-                                .as_ref()
-                                .map_or_else(SharedString::default, |c| c.title.clone()),
-                        ),
-                    )
+                    .child({
+                        let title = self
+                            .content
+                            .as_ref()
+                            .map_or_else(SharedString::default, |c| c.title.clone());
+                        div()
+                            .id("details-title")
+                            .role(Role::Heading)
+                            .aria_label(title.clone())
+                            .text_lg()
+                            .font_weight(FontWeight::SEMIBOLD)
+                            .child(title)
+                            .test_support()
+                    })
                     .when_some(
                         self.content
                             .as_ref()
@@ -260,15 +281,36 @@ impl Render for ReminderDetailsView {
                         },
                     ),
             )
-            .child(
-                Button::new("close-reminder-details")
-                    .icon(IconName::Close)
-                    .ghost()
-                    .xsmall()
-                    .accessibility_label("Close details")
-                    .tooltip("Close details")
-                    .on_click(cx.listener(|_, _, _, cx| cx.emit(ReminderDetailsEvent::Close))),
-            );
+            .when(!self.in_window, |header| {
+                header
+                    .child(
+                        Button::new("open-task-window")
+                            .icon(IconName::ExternalLink)
+                            .ghost()
+                            .xsmall()
+                            .accessibility_label("Open in new window")
+                            .tooltip("Open in new window")
+                            .disabled(self.task.is_none())
+                            .on_click(cx.listener(|this, _, _, cx| {
+                                if let Some(task) = this.task {
+                                    cx.emit(ReminderDetailsEvent::OpenInWindow {
+                                        task_id: task.id,
+                                    });
+                                }
+                            })),
+                    )
+                    .child(
+                        Button::new("close-reminder-details")
+                            .icon(IconName::Close)
+                            .ghost()
+                            .xsmall()
+                            .accessibility_label("Close details")
+                            .tooltip("Close details")
+                            .on_click(
+                                cx.listener(|_, _, _, cx| cx.emit(ReminderDetailsEvent::Close)),
+                            ),
+                    )
+            });
 
         let done_button = self.task.map(|task| {
             let label = if task.done {
@@ -347,7 +389,11 @@ impl Render for ReminderDetailsView {
         v_flex()
             .id("reminder-details")
             .role(Role::Region)
-            .aria_label("Reminder details")
+            .aria_label(if self.in_window {
+                "Task details"
+            } else {
+                "Reminder details"
+            })
             .size_full()
             .gap_4()
             .p_4()
@@ -572,5 +618,51 @@ mod tests {
             cx,
             "Couldn't update the task: Server unavailable"
         ));
+    }
+
+    #[gpui_kit::test]
+    fn opens_the_task_in_a_window_of_its_own(cx: &mut TestAppContext) {
+        let open_view = |cx: &mut TestAppContext, build: fn() -> ReminderDetailsView| {
+            cx.update(|cx| {
+                gpui_kit::init(cx);
+                gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                    cx.new(|cx| {
+                        let mut view = build();
+                        view.set_details(&details(&task()), cx);
+                        view
+                    })
+                })
+                .unwrap()
+            })
+        };
+        let (handle, view) = open_view(cx, ReminderDetailsView::new);
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = std::rc::Rc::clone(&events);
+            cx.subscribe(&view, move |_, event, _| events.borrow_mut().push(*event))
+                .detach();
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find_by_label("Open in new window");
+            window.click("open-task-window", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            *events.borrow(),
+            [ReminderDetailsEvent::OpenInWindow { task_id: 7 }]
+        );
+
+        // In its own window the task has neither the panel's close nor open buttons.
+        let (handle, _) = open_view(cx, ReminderDetailsView::new_window);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find_by_label("Task details");
+            window.find_by_label("Pay rent");
+            assert!(window.try_find_by_label("Open in new window").is_none());
+            assert!(window.try_find_by_label("Close details").is_none());
+        })
+        .unwrap();
     }
 }
