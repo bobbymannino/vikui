@@ -1,7 +1,8 @@
 //! Opens a reminders window for a project, filter or search and fills it in.
 //!
 //! The window's details side panel is a [`ReminderDetailsView`], filled from the tasks
-//! loaded for the list. Marking a task done from the panel or the list saves it here.
+//! loaded for the list. Marking a task done from the panel, the list or a task window
+//! saves it here. Tasks open in windows of their own through [`task_window`].
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -16,6 +17,8 @@ use reminders::Reminder;
 use reminders::Source;
 use reminders_ui::{RemindersEvent, RemindersView};
 use vikunja::{Client, Task};
+
+use crate::task_window::{self, SetDone};
 
 /// Open a window listing the reminders from `source`, loading them in the background.
 ///
@@ -163,7 +166,7 @@ impl Loader {
 }
 
 /// Give the window a details panel: fill it when a reminder is opened, save the task when
-/// it is marked done, and close it on request.
+/// it is marked done, close it on request, and open tasks in windows of their own.
 fn attach_details_panel(
     handle: AnyWindowHandle,
     view: &Entity<RemindersView>,
@@ -179,54 +182,65 @@ fn attach_details_panel(
     // The reminder the panel shows, to refresh it after a save.
     let shown: Rc<RefCell<Option<Reminder>>> = Rc::default();
 
-    cx.subscribe(view, {
-        let details = details.clone();
-        let tasks = Rc::clone(&tasks);
-        let shown = Rc::clone(&shown);
-        move |_, event, cx| {
-            let RemindersEvent::ShowDetails(reminder) = event else {
-                return;
-            };
-            let loaded = tasks.borrow();
-            let Some(task) = loaded.tasks.get(&reminder.task_id) else {
-                log::warn!("no loaded task {} for reminder details", reminder.task_id);
-                return;
-            };
-            let info = loaded.details(reminder, task);
-            drop(loaded);
-            *shown.borrow_mut() = Some(reminder.clone());
-            details.update(cx, |details, cx| details.set_details(&info, cx));
-        }
-    })
-    .detach();
-
-    // Marking done from the list (keyboard) saves the same way as from the panel.
-    cx.subscribe(view, {
+    // Marking done from the list, the panel or a task window all save the same way.
+    let set_done: SetDone = {
         let targets = SaveTargets {
             view: view.downgrade(),
             details: details.downgrade(),
             tasks: Rc::clone(&tasks),
             shown: Rc::clone(&shown),
         };
-        let session = Arc::clone(&session);
-        let on_session_expired = Rc::clone(&on_session_expired);
-        move |_, event, cx| {
-            if let RemindersEvent::SetDone { task_id, done } = *event {
-                save_done(
-                    targets.clone(),
-                    Arc::clone(&session),
-                    Rc::clone(&on_session_expired),
-                    task_id,
-                    done,
-                    cx,
-                );
+        Rc::new(move |task_id, done, cx| {
+            save_done(
+                targets.clone(),
+                Arc::clone(&session),
+                Rc::clone(&on_session_expired),
+                task_id,
+                done,
+                cx,
+            );
+        })
+    };
+    let open_task = {
+        let tasks = Rc::clone(&tasks);
+        let set_done = Rc::clone(&set_done);
+        move |reminder: &Reminder, cx: &mut App| {
+            let loaded = tasks.borrow();
+            let Some(task) = loaded.tasks.get(&reminder.task_id) else {
+                return log::warn!("no loaded task {} to open", reminder.task_id);
+            };
+            let info = loaded.details(reminder, task);
+            drop(loaded);
+            task_window::open(reminder, &info, Rc::clone(&set_done), cx);
+        }
+    };
+
+    cx.subscribe(view, {
+        let details = details.clone();
+        let tasks = Rc::clone(&tasks);
+        let shown = Rc::clone(&shown);
+        let set_done = Rc::clone(&set_done);
+        let open_task = open_task.clone();
+        move |_, event, cx| match event {
+            RemindersEvent::ShowDetails(reminder) => {
+                let loaded = tasks.borrow();
+                let Some(task) = loaded.tasks.get(&reminder.task_id) else {
+                    log::warn!("no loaded task {} for reminder details", reminder.task_id);
+                    return;
+                };
+                let info = loaded.details(reminder, task);
+                drop(loaded);
+                *shown.borrow_mut() = Some(reminder.clone());
+                details.update(cx, |details, cx| details.set_details(&info, cx));
             }
+            RemindersEvent::SetDone { task_id, done } => set_done(*task_id, *done, cx),
+            RemindersEvent::OpenTask(reminder) => open_task(reminder, cx),
+            RemindersEvent::Refresh => {}
         }
     })
     .detach();
 
     let view = view.downgrade();
-    let weak_details = details.downgrade();
     cx.subscribe(&details, move |_, event, cx| match *event {
         ReminderDetailsEvent::Close => {
             let Some(view) = view.upgrade() else {
@@ -238,23 +252,16 @@ fn attach_details_panel(
                 })
                 .ok();
         }
-        ReminderDetailsEvent::SetDone { task_id, done } => {
-            let targets = SaveTargets {
-                view: view.clone(),
-                details: weak_details.clone(),
-                tasks: Rc::clone(&tasks),
-                shown: Rc::clone(&shown),
-            };
-            save_done(
-                targets,
-                Arc::clone(&session),
-                Rc::clone(&on_session_expired),
-                task_id,
-                done,
-                cx,
-            );
+        ReminderDetailsEvent::SetDone { task_id, done } => set_done(task_id, done, cx),
+        ReminderDetailsEvent::OpenInWindow { task_id } => {
+            let reminder = shown
+                .borrow()
+                .clone()
+                .filter(|reminder| reminder.task_id == task_id);
+            if let Some(reminder) = reminder {
+                open_task(&reminder, cx);
+            }
         }
-        ReminderDetailsEvent::OpenInWindow { .. } => {}
     })
     .detach();
 }
@@ -287,6 +294,7 @@ fn save_done(
             Err(vikunja::Error::Unauthorized) => on_session_expired(cx),
             Err(err) => {
                 log::warn!("failed to update task {task_id}: {err:#}");
+                task_window::failed(task_id, &err.to_string(), cx);
                 if let Some(details) = targets.details.upgrade() {
                     details.update(cx, |details, cx| {
                         if details.task_id() == Some(task_id) {
@@ -319,6 +327,12 @@ impl SaveTargets {
                 }
             });
         }
+        drop(shown);
+        task_window::saved(
+            &task,
+            |reminder, task| self.tasks.borrow().details(reminder, task),
+            cx,
+        );
         self.tasks.borrow_mut().tasks.insert(id, task);
     }
 }

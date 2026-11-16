@@ -6,6 +6,7 @@ mod app_menu;
 mod app_preferences;
 mod reminders_window;
 mod settings_window;
+mod task_window;
 
 use std::cell::Cell;
 use std::rc::Rc;
