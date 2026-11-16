@@ -68,17 +68,56 @@ pub fn init(cx: &mut App) {
     });
 }
 
-fn with_active_window(cx: &mut App, f: impl FnOnce(&mut Window, &mut App)) {
-    if let Some(handle) = cx.active_window() {
-        handle.update(cx, |_, window, cx| f(window, cx)).ok();
-    }
+/// Run `f` on the active window.
+///
+/// Deferred: a key binding's action runs while GPUI is still updating the window it was
+/// pressed in, and updating that window again from inside fails, so the action would be
+/// silently dropped (the menu bar dispatches outside any window, so it worked from there).
+fn with_active_window(cx: &mut App, f: impl FnOnce(&mut Window, &mut App) + 'static) {
+    let Some(handle) = cx.active_window() else {
+        return;
+    };
+    cx.defer(move |cx| {
+        if let Err(err) = handle.update(cx, |_, window, cx| f(window, cx)) {
+            log::warn!("window action skipped: {err:#}");
+        }
+    });
 }
 
 #[cfg(test)]
 mod tests {
-    use gpui_kit::TestAppContext;
+    use gpui_kit::test::TestEventExt as _;
+    use gpui_kit::{
+        AppContext as _, Context, IntoElement, Render, TestAppContext, WindowOptions, div,
+    };
 
     use super::*;
+
+    struct Blank;
+
+    impl Render for Blank {
+        fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+            div()
+        }
+    }
+
+    #[gpui_kit::test]
+    fn mod_w_closes_the_window_it_is_pressed_in(cx: &mut TestAppContext) {
+        let handle = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| cx.new(|_| Blank))
+                .unwrap()
+                .0
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.activate_window();
+            window.key_down("secondary-w", false, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(cx.update(|cx| cx.windows().is_empty()));
+    }
 
     #[gpui_kit::test]
     fn every_binding_is_valid(cx: &mut TestAppContext) {
