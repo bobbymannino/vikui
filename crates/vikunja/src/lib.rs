@@ -7,6 +7,7 @@ mod new_task;
 mod project;
 mod server_url;
 mod task;
+mod task_update;
 
 use std::fmt;
 use std::time::Duration;
@@ -24,6 +25,7 @@ pub use task::{
     Label, RelativeReminder, RelativeTo, Repeat, SavedFilter, SavedQuery, Task, TaskQuery,
     TaskReminder,
 };
+pub use task_update::{Change, TaskUpdate};
 
 const TIMEOUT: Duration = Duration::from_secs(20);
 const USER_AGENT: &str = concat!("vikui/", env!("CARGO_PKG_VERSION"));
@@ -248,6 +250,45 @@ impl Client {
             })
     }
 
+    /// One task, as the server has it now.
+    pub fn task(&self, token: &Token, task_id: i64) -> Result<Task, Error> {
+        self.get_json(token, &format!("tasks/{task_id}"))
+    }
+
+    /// Apply `update` to `task_id` and return the task as saved.
+    ///
+    /// Vikunja's update replaces every field, so this reads the whole task, changes
+    /// only what `update` names, and sends the rest back unchanged. Labels are added and
+    /// removed after; one that fails is logged, since the other changes are saved by
+    /// then. Compare the returned task's labels with the ones asked for.
+    pub fn update_task(
+        &self,
+        token: &Token,
+        task_id: i64,
+        update: &TaskUpdate,
+    ) -> Result<Task, Error> {
+        let path = format!("tasks/{task_id}");
+        if update.changes_fields() {
+            let mut task: serde_json::Value = self.get_json(token, &path)?;
+            update.apply(&mut task);
+            let _saved: serde_json::Value = self.post_json(token, &path, &task)?;
+        }
+        let labels = format!("tasks/{task_id}/labels");
+        for &label_id in &update.add_label_ids {
+            let added: Result<serde_json::Value, Error> =
+                self.put_json(token, &labels, &serde_json::json!({ "label_id": label_id }));
+            if let Err(err) = added {
+                log::warn!("couldn't add label {label_id} to task {task_id}: {err}");
+            }
+        }
+        for &label_id in &update.remove_label_ids {
+            if let Err(err) = self.delete(token, &format!("{labels}/{label_id}")) {
+                log::warn!("couldn't remove label {label_id} from task {task_id}: {err}");
+            }
+        }
+        self.get_json(token, &path)
+    }
+
     /// One saved filter, including the query it stores.
     pub fn saved_filter(&self, token: &Token, filter_id: i64) -> Result<SavedFilter, Error> {
         self.get_json(token, &format!("filters/{filter_id}"))
@@ -311,6 +352,19 @@ impl Client {
             return Err(error_from(&mut response));
         }
         Ok(response.body_mut().read_json()?)
+    }
+
+    fn delete(&self, token: &Token, path: &str) -> Result<(), Error> {
+        let mut response = self
+            .agent
+            .delete(self.server.endpoint(path).as_str())
+            .header("Accept", ACCEPT_JSON)
+            .header("Authorization", &format!("Bearer {}", token.expose()))
+            .call()?;
+        if !response.status().is_success() {
+            return Err(error_from(&mut response));
+        }
+        Ok(())
     }
 
     /// `GET` a paginated collection, following pages until all items are fetched.

@@ -5,7 +5,8 @@
 //!
 //! Double-clicking a row (or pressing Cmd/Ctrl+Enter on it) reports
 //! [`RemindersEvent::OpenTask`], to open its task in a window of its own. Cmd/Ctrl+O
-//! reports [`RemindersEvent::OpenInBrowser`]. Each row's context menu offers both.
+//! reports [`RemindersEvent::OpenInBrowser`] and Cmd/Ctrl+E [`RemindersEvent::EditTask`].
+//! Each row's context menu offers all three.
 //!
 //! Clicking a row (or pressing Enter on it) toggles a details side panel. The view only
 //! reserves the space and reports [`RemindersEvent::ShowDetails`]; the caller supplies
@@ -59,7 +60,8 @@ gpui_kit::actions!(
         Refresh,
         FocusSearch,
         OpenTask,
-        OpenInBrowser
+        OpenInBrowser,
+        EditTask
     ]
 );
 
@@ -91,9 +93,10 @@ pub fn init(cx: &mut App) {
     let list_context = KeyBindingContextPredicate::parse(LIST_CONTEXT)
         .ok()
         .map(Rc::new);
-    let list_bindings: [(&str, Box<dyn gpui_kit::Action>); 2] = [
+    let list_bindings: [(&str, Box<dyn gpui_kit::Action>); 3] = [
         ("secondary-enter", Box::new(OpenTask)),
         ("secondary-o", Box::new(OpenInBrowser)),
+        ("secondary-e", Box::new(EditTask)),
     ];
     for (keystrokes, action) in list_bindings {
         match KeyBinding::load(keystrokes, action, list_context.clone(), false, None, cx) {
@@ -117,6 +120,8 @@ pub enum RemindersEvent {
     OpenTask(Reminder),
     /// The user asked to open this task's page in the web browser.
     OpenInBrowser { task_id: i64 },
+    /// The user asked to edit this task.
+    EditTask { task_id: i64 },
     /// The user asked to add a new reminder.
     NewReminder,
 }
@@ -174,6 +179,7 @@ impl RemindersView {
                     view.update(cx, |this, cx| match command {
                         RowCommand::OpenInWindow => this.open_task(row_ix, cx),
                         RowCommand::OpenInBrowser => this.open_in_browser(row_ix, cx),
+                        RowCommand::Edit => this.edit_task(row_ix, cx),
                     })
                     .ok();
                 }));
@@ -443,6 +449,23 @@ impl RemindersView {
         }
     }
 
+    fn edit_task(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        if let Some(reminder) = self
+            .order_of(row_ix, cx)
+            .and_then(|order| self.reminders.get(order))
+        {
+            cx.emit(RemindersEvent::EditTask {
+                task_id: reminder.task_id,
+            });
+        }
+    }
+
+    fn on_edit_task(&mut self, _: &EditTask, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(row_ix) = self.table.read(cx).selected_row() {
+            self.edit_task(row_ix, cx);
+        }
+    }
+
     fn on_open_in_browser(&mut self, _: &OpenInBrowser, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(row_ix) = self.table.read(cx).selected_row() {
             self.open_in_browser(row_ix, cx);
@@ -536,6 +559,7 @@ impl Render for RemindersView {
             .on_action(cx.listener(Self::on_focus_search))
             .on_action(cx.listener(Self::on_open_task))
             .on_action(cx.listener(Self::on_open_in_browser))
+            .on_action(cx.listener(Self::on_edit_task))
             .size_full()
             .gap_4()
             .p_6()
@@ -1266,6 +1290,9 @@ mod tests {
                         .borrow_mut()
                         .push(format!("window {}", reminder.task_id));
                 }
+                RemindersEvent::EditTask { task_id } => {
+                    events.borrow_mut().push(format!("edit {task_id}"));
+                }
                 RemindersEvent::OpenInBrowser { task_id } => {
                     events.borrow_mut().push(format!("browser {task_id}"));
                 }
@@ -1288,9 +1315,11 @@ mod tests {
             .unwrap();
             cx.run_until_parked();
         };
-        pick(cx, "Open in new window", 0);
-        pick(cx, "Open in browser", 1);
-        assert_eq!(*events.borrow(), ["window 2", "browser 2"]);
+        // The menu's items, by index: Edit…, a separator, then the two open items.
+        pick(cx, "Edit…", 0);
+        pick(cx, "Open in new window", 2);
+        pick(cx, "Open in browser", 3);
+        assert_eq!(*events.borrow(), ["edit 2", "window 2", "browser 2"]);
 
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
@@ -1299,7 +1328,15 @@ mod tests {
         })
         .unwrap();
         cx.run_until_parked();
-        assert_eq!(*events.borrow(), ["window 2", "browser 2", "browser 1"]);
+        cx.update_window(handle, |_, window, cx| {
+            window.key_down("secondary-e", false, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            *events.borrow(),
+            ["edit 2", "window 2", "browser 2", "browser 1", "edit 1"]
+        );
     }
 
     #[gpui_kit::test]

@@ -45,6 +45,8 @@ pub fn open(cx: &mut App) {
         NewReminderEvent::Create(draft) => {
             create(handle, view.downgrade(), draft, signed_in.clone(), cx);
         }
+        // Only an edit window saves.
+        NewReminderEvent::Save(_) => {}
     })
     .detach();
 }

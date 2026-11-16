@@ -66,6 +66,7 @@ pub fn open(
     cx.subscribe(&view, move |_, event, cx| match *event {
         ReminderDetailsEvent::SetDone { task_id, done } => set_done(task_id, done, cx),
         ReminderDetailsEvent::OpenInBrowser { task_id } => open_in_browser(&server, task_id, cx),
+        ReminderDetailsEvent::Edit { task_id } => crate::edit_task_window::open(task_id, cx),
         ReminderDetailsEvent::Close | ReminderDetailsEvent::OpenInWindow { .. } => {}
     })
     .detach();
@@ -82,6 +83,35 @@ pub fn open(
 /// Open `task_id`'s page on `server` in the default web browser.
 pub fn open_in_browser(server: &ServerUrl, task_id: i64, cx: &App) {
     cx.open_url(server.task_page(task_id).as_str());
+}
+
+/// Show `task`, edited, in its window if one is open: its reminders may have moved, so
+/// the window shows the task's first. `project` names the task's project.
+pub fn replace(task: &Task, project: Option<&str>, cx: &mut App) {
+    let Some(opened) = cx
+        .try_global::<TaskWindows>()
+        .and_then(|windows| windows.0.get(&task.id))
+    else {
+        return;
+    };
+    let handle = opened.handle;
+    let Some(view) = opened.view.upgrade() else {
+        return;
+    };
+    let Some(reminder) = reminders::from_tasks(std::slice::from_ref(task))
+        .into_iter()
+        .next()
+    else {
+        return;
+    };
+    let info = ReminderDetails::new(&reminder, task, project);
+    view.update(cx, |view, cx| view.set_details(&info, cx));
+    handle
+        .update(cx, |_, window, _| window.set_window_title(&task.title))
+        .ok();
+    if let Some(opened) = cx.default_global::<TaskWindows>().0.get_mut(&task.id) {
+        opened.reminder = reminder;
+    }
 }
 
 /// Show `task` as saved in its window, if one is open. `details` builds the window's
