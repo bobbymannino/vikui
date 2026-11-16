@@ -136,7 +136,8 @@ impl Col {
     }
 }
 
-/// Called with the clicked row's index (in display order).
+/// Called with the clicked row's index (in display order) on a single click; the table
+/// reports double clicks itself, as `TableEvent::DoubleClickedRow`.
 pub type OnRowClick = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 
 pub struct RemindersTable {
@@ -267,7 +268,12 @@ impl TableDelegate for RemindersTable {
         div()
             .id(("row", row_ix))
             .when_some(self.on_row_click.clone(), |row, on_click| {
-                row.on_click(move |_, window, cx| on_click(row_ix, window, cx))
+                row.on_click(move |event, window, cx| {
+                    // A double click starts with a single one; later clicks don't toggle.
+                    if event.click_count() == 1 {
+                        on_click(row_ix, window, cx);
+                    }
+                })
             })
     }
 

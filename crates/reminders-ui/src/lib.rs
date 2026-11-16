@@ -3,6 +3,9 @@
 //! The view does not fetch anything: the caller passes in the reminders (from one
 //! project, a filter, or search results) and can replace them later.
 //!
+//! Double-clicking a row (or pressing Cmd/Ctrl+Enter on it) reports
+//! [`RemindersEvent::OpenTask`], to open its task in a window of its own.
+//!
 //! Clicking a row (or pressing Enter on it) toggles a details side panel. The view only
 //! reserves the space and reports [`RemindersEvent::ShowDetails`]; the caller supplies
 //! the panel with [`RemindersView::set_details_panel`] and fills it in.
@@ -39,7 +42,10 @@ use reminders::{Reminder, Search};
 
 use reminders_table::{ReminderRow, RemindersTable};
 
-gpui_kit::actions!(reminders, [ToggleDetails, ToggleDone, Refresh, FocusSearch]);
+gpui_kit::actions!(
+    reminders,
+    [ToggleDetails, ToggleDone, Refresh, FocusSearch, OpenTask]
+);
 
 const CONTEXT: &str = "Reminders";
 /// Plain keys act on the list only while it has focus, so they type into the search field.
@@ -66,6 +72,20 @@ pub fn init(cx: &mut App) {
             Err(err) => log::error!("invalid key binding {keystrokes}: {err}"),
         }
     }
+    let list_context = KeyBindingContextPredicate::parse(LIST_CONTEXT)
+        .ok()
+        .map(Rc::new);
+    match KeyBinding::load(
+        "secondary-enter",
+        Box::new(OpenTask),
+        list_context,
+        false,
+        None,
+        cx,
+    ) {
+        Ok(binding) => cx.bind_keys([binding]),
+        Err(err) => log::error!("invalid open task key binding: {err}"),
+    }
 }
 
 /// Events for the app to act on.
@@ -78,6 +98,8 @@ pub enum RemindersEvent {
     Refresh,
     /// The user asked to mark the selected row's task done (or not done).
     SetDone { task_id: i64, done: bool },
+    /// The user asked to open this reminder's task in a window of its own.
+    OpenTask(Reminder),
 }
 
 /// A titled, sortable list of reminders with an optional details panel.
@@ -129,6 +151,7 @@ impl RemindersView {
             TableEvent::SelectRow(row_ix) if this.details_for.is_some() => {
                 this.show_row(*row_ix, cx);
             }
+            TableEvent::DoubleClickedRow(row_ix) => this.open_task(*row_ix, cx),
             TableEvent::ClearSelection => this.hide_details(cx),
             _ => {}
         });
@@ -337,6 +360,21 @@ impl RemindersView {
         cx.notify();
     }
 
+    fn open_task(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        if let Some(reminder) = self
+            .order_of(row_ix, cx)
+            .and_then(|order| self.reminders.get(order))
+        {
+            cx.emit(RemindersEvent::OpenTask(reminder.clone()));
+        }
+    }
+
+    fn on_open_task(&mut self, _: &OpenTask, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(row_ix) = self.table.read(cx).selected_row() {
+            self.open_task(row_ix, cx);
+        }
+    }
+
     fn on_toggle_details(&mut self, _: &ToggleDetails, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(row_ix) = self.table.read(cx).selected_row() {
             self.toggle_row(row_ix, cx);
@@ -415,6 +453,7 @@ impl Render for RemindersView {
             .on_action(cx.listener(Self::on_toggle_done))
             .on_action(cx.listener(Self::on_refresh))
             .on_action(cx.listener(Self::on_focus_search))
+            .on_action(cx.listener(Self::on_open_task))
             .size_full()
             .gap_4()
             .p_6()
@@ -1018,5 +1057,58 @@ mod tests {
                 done: true
             }]
         );
+    }
+
+    #[gpui_kit::test]
+    fn double_click_or_mod_enter_opens_the_task(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let second = Reminder {
+            task_id: 2,
+            ..reminder(soon, "Call landlord")
+        };
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let reminders = vec![reminder(soon, "Pay rent"), second.clone()];
+            open(options(), "Reminders – Home", Some(reminders), cx).unwrap()
+        });
+        let opened = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let panel = cx.new(|_| TestPanel);
+            view.update(cx, |view, cx| view.set_details_panel(panel.into(), cx));
+            let opened = Rc::clone(&opened);
+            cx.subscribe(&view, move |_, event: &RemindersEvent, _| {
+                if let RemindersEvent::OpenTask(reminder) = event {
+                    opened.borrow_mut().push(reminder.task_title.clone());
+                }
+            })
+            .detach();
+        });
+        let panel_visible = |cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.try_find_by_label("Test panel").is_some()
+            })
+            .unwrap()
+        };
+
+        // A double click: its first click opens the panel, its second the task.
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.double_click(("row", 1_usize), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(*opened.borrow(), ["Call landlord"]);
+        // The second click doesn't close the panel the first one opened.
+        assert!(panel_visible(cx));
+
+        cx.update_window(handle, |_, window, cx| {
+            window.key_down("up", false, cx);
+            window.key_down("secondary-enter", false, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(*opened.borrow(), ["Call landlord", "Pay rent"]);
     }
 }
