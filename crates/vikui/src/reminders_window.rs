@@ -285,7 +285,7 @@ fn attach_details_panel(
             }
             RemindersEvent::SetDone { task_id, done } => set_done(*task_id, *done, cx),
             RemindersEvent::OpenTask(reminder) => open_task(reminder, cx),
-            RemindersEvent::Refresh => {}
+            RemindersEvent::Refresh | RemindersEvent::OpenInBrowser { .. } => {}
         }
     })
     .detach();

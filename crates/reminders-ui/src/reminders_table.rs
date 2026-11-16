@@ -4,6 +4,8 @@ use std::cmp::Ordering;
 use std::rc::Rc;
 
 use gpui_kit::base::TestSupportExt as _;
+use gpui_kit::component::IconName;
+use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::tag::Tag;
 use gpui_kit::component::{ActiveTheme as _, h_flex};
@@ -140,9 +142,21 @@ impl Col {
 /// reports double clicks itself, as `TableEvent::DoubleClickedRow`.
 pub type OnRowClick = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 
+/// What a row's context menu offers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowCommand {
+    OpenInWindow,
+    OpenInBrowser,
+}
+
+/// Called with the row's index (in display order) and the command picked from its
+/// context menu.
+pub type OnRowCommand = Rc<dyn Fn(usize, RowCommand, &mut Window, &mut App)>;
+
 pub struct RemindersTable {
     rows: Vec<ReminderRow>,
     on_row_click: Option<OnRowClick>,
+    on_row_command: Option<OnRowCommand>,
     loading: bool,
     /// Shown when there are no rows.
     empty_message: SharedString,
@@ -154,6 +168,7 @@ impl Default for RemindersTable {
         Self {
             rows: Vec::new(),
             on_row_click: None,
+            on_row_command: None,
             loading: false,
             empty_message: "No reminders.".into(),
             sort: None,
@@ -179,6 +194,11 @@ impl RemindersTable {
     /// Runs on every left click on a row, in addition to the table selecting it.
     pub fn set_on_row_click(&mut self, on_row_click: OnRowClick) {
         self.on_row_click = Some(on_row_click);
+    }
+
+    /// Gives each row a context menu of [`RowCommand`]s.
+    pub fn set_on_row_command(&mut self, on_row_command: OnRowCommand) {
+        self.on_row_command = Some(on_row_command);
     }
 
     pub fn row(&self, row_ix: usize) -> Option<&ReminderRow> {
@@ -275,6 +295,34 @@ impl TableDelegate for RemindersTable {
                     }
                 })
             })
+    }
+
+    fn context_menu(
+        &mut self,
+        row_ix: usize,
+        menu: PopupMenu,
+        _: &mut Window,
+        _: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        let Some(on_command) = self.on_row_command.clone() else {
+            return menu;
+        };
+        let item = |label: &'static str, icon: IconName, command: RowCommand| {
+            let on_command = Rc::clone(&on_command);
+            PopupMenuItem::new(label)
+                .icon(icon)
+                .on_click(move |_, window, cx| on_command(row_ix, command, window, cx))
+        };
+        menu.item(item(
+            "Open in new window",
+            IconName::ExternalLink,
+            RowCommand::OpenInWindow,
+        ))
+        .item(item(
+            "Open in browser",
+            IconName::Globe,
+            RowCommand::OpenInBrowser,
+        ))
     }
 
     fn render_td(
