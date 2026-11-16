@@ -30,6 +30,8 @@ pub enum ReminderDetailsEvent {
     SetDone { task_id: i64, done: bool },
     /// The user asked to open the task in a window of its own.
     OpenInWindow { task_id: i64 },
+    /// The user asked to open the task's page in the web browser.
+    OpenInBrowser { task_id: i64 },
 }
 
 /// One labelled value, e.g. "Due" / "Tue 1 Dec 2026, 09:00".
@@ -129,7 +131,7 @@ pub struct ReminderDetailsView {
     saving: bool,
     error: Option<SharedString>,
     /// Shown as a window's whole content, not a side panel: no close or open-in-window
-    /// buttons (the window has its own close).
+    /// buttons (the window has its own close). Open-in-browser shows either way.
     in_window: bool,
 }
 
@@ -280,6 +282,20 @@ impl Render for ReminderDetailsView {
                             )
                         },
                     ),
+            )
+            .child(
+                Button::new("open-task-in-browser")
+                    .icon(IconName::Globe)
+                    .ghost()
+                    .xsmall()
+                    .accessibility_label("Open in browser")
+                    .tooltip("Open in browser")
+                    .disabled(self.task.is_none())
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        if let Some(task) = this.task {
+                            cx.emit(ReminderDetailsEvent::OpenInBrowser { task_id: task.id });
+                        }
+                    })),
             )
             .when(!self.in_window, |header| {
                 header
@@ -648,10 +664,18 @@ mod tests {
             window.click("open-task-window", cx);
         })
         .unwrap();
+        cx.update_window(handle, |_, window, cx| {
+            window.find_by_label("Open in browser");
+            window.click("open-task-in-browser", cx);
+        })
+        .unwrap();
         cx.run_until_parked();
         assert_eq!(
             *events.borrow(),
-            [ReminderDetailsEvent::OpenInWindow { task_id: 7 }]
+            [
+                ReminderDetailsEvent::OpenInWindow { task_id: 7 },
+                ReminderDetailsEvent::OpenInBrowser { task_id: 7 },
+            ]
         );
 
         // In its own window the task has neither the panel's close nor open buttons.
@@ -662,6 +686,7 @@ mod tests {
             window.find_by_label("Pay rent");
             assert!(window.try_find_by_label("Open in new window").is_none());
             assert!(window.try_find_by_label("Close details").is_none());
+            window.find_by_label("Open in browser");
         })
         .unwrap();
     }

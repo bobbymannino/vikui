@@ -303,6 +303,7 @@ fn attach_details_panel(
                 .ok();
         }
         ReminderDetailsEvent::SetDone { task_id, done } => set_done(task_id, done, cx),
+        ReminderDetailsEvent::OpenInBrowser { .. } => {}
         ReminderDetailsEvent::OpenInWindow { task_id } => {
             let reminder = shown
                 .borrow()
