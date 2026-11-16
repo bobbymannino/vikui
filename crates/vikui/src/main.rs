@@ -40,6 +40,8 @@ fn main() {
         app_menu::init(cx);
         Theme::sync_system_appearance(None, cx);
         quit_when_last_window_closes(cx);
+        // Remove what the last update left behind (the old executable on Windows).
+        cx.background_spawn(async { updater::clean_up() }).detach();
 
         open_initial_window(cx);
     });

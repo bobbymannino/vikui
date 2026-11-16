@@ -8138,6 +8138,7 @@ dependencies = [
  "reminders",
  "reminders-ui",
  "settings-ui",
+ "updater",
  "vikunja",
  "winresource",
 ]
