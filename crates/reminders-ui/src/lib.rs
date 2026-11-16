@@ -17,30 +17,38 @@
 //! The search field (Cmd/Ctrl+F) filters the list by task title, ignoring case, spaces
 //! and punctuation (see [`reminders::Search`]). Enter moves to the results; Escape clears.
 //!
+//! Below it, one chip per label on the listed tasks filters to tasks with every selected
+//! label (see [`reminders::LabelFilter`]).
+//!
 //! Pressing T (as in Vikunja's web app) reports [`RemindersEvent::SetDone`] for the
 //! selected row's task; the caller saves it and answers with
 //! [`RemindersView::set_task_done`].
 
+mod label_tag;
 mod reminders_table;
 
 use std::rc::Rc;
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::alert::Alert;
-use gpui_kit::component::button::Button;
+use gpui_kit::component::button::{Button, ButtonVariants as _, Toggle, ToggleVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::table::{DataTable, TableEvent, TableState};
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, Icon, IconName, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, h_flex, v_flex,
+};
 use gpui_kit::{
-    AnyView, AnyWindowHandle, App, AppContext as _, Context, Entity, EventEmitter, Focusable as _,
-    FontWeight, InteractiveElement as _, IntoElement, KeyBinding, KeyBindingContextPredicate,
-    ParentElement as _, Render, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
-    Subscription, Window, WindowOptions, div, prelude::FluentBuilder as _, px,
+    AnyElement, AnyView, AnyWindowHandle, App, AppContext as _, Context, Entity, EventEmitter,
+    Focusable as _, FontWeight, InteractiveElement as _, IntoElement, KeyBinding,
+    KeyBindingContextPredicate, ParentElement as _, Render, Role, SharedString,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, WindowOptions, div,
+    prelude::FluentBuilder as _, px,
 };
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
-use reminders::{Reminder, Search};
+use reminders::{LabelFilter, Reminder, Search};
 
+use label_tag::LabelTag;
 use reminders_table::{ReminderRow, RemindersTable, RowCommand};
 
 gpui_kit::actions!(
@@ -120,6 +128,10 @@ pub struct RemindersView {
     query: Search,
     /// The search field's text, for the empty-list message.
     query_text: SharedString,
+    /// Every label on the listed tasks, one chip each.
+    labels: Vec<LabelTag>,
+    /// The labels a task must all have to be listed.
+    label_filter: LabelFilter,
     summary: SharedString,
     error: Option<SharedString>,
     /// Waiting for reminders (the first load or a refresh).
@@ -200,6 +212,8 @@ impl RemindersView {
             table,
             search,
             query: Search::default(),
+            labels: Vec::new(),
+            label_filter: LabelFilter::default(),
             query_text: SharedString::default(),
             summary: SharedString::default(),
             error: None,
@@ -242,6 +256,9 @@ impl RemindersView {
         self.loading = false;
         self.reminders = reminders.to_vec();
         self.matched_tasks = matched_tasks;
+        let labels = reminders::labels_in(&self.reminders);
+        self.label_filter.retain_in(&labels);
+        self.labels = labels.iter().map(LabelTag::new).collect();
         self.details_for = shown.and_then(|shown| {
             self.reminders
                 .iter()
@@ -263,6 +280,19 @@ impl RemindersView {
         self.query_text = text;
         if query != self.query {
             self.query = query;
+            self.refresh_rows(cx);
+        }
+    }
+
+    /// Select `label_id` in the label filter, or deselect it.
+    fn toggle_label(&mut self, label_id: i64, cx: &mut Context<Self>) {
+        self.label_filter.toggle(label_id);
+        self.refresh_rows(cx);
+    }
+
+    fn clear_labels(&mut self, cx: &mut Context<Self>) {
+        if !self.label_filter.is_empty() {
+            self.label_filter.clear();
             self.refresh_rows(cx);
         }
     }
@@ -305,14 +335,26 @@ impl RemindersView {
             .filter(|row| row.is_set && !row.inactive)
             .count();
         let total = rows.len();
-        rows.retain(|row| self.query.matches_normalized(&row.search_key));
+        rows.retain(|row| {
+            self.query.matches_normalized(&row.search_key)
+                && self
+                    .reminders
+                    .get(row.order)
+                    .is_some_and(|reminder| self.label_filter.matches(reminder))
+        });
         let mut summary = summary(set, upcoming, self.matched_tasks);
-        let empty_message = if self.query.is_empty() {
-            empty_message(self.matched_tasks)
-        } else {
-            summary = format!("{summary} · {} of {total} shown", rows.len()).into();
-            format!("Nothing matches “{}”.", self.query_text.trim()).into()
+        let query = self.query_text.trim();
+        let empty_message = match (self.query.is_empty(), self.label_filter.is_empty()) {
+            (true, true) => empty_message(self.matched_tasks),
+            (false, true) => format!("Nothing matches “{query}”.").into(),
+            (true, false) => "No reminders have all the selected labels.".into(),
+            (false, false) => {
+                format!("Nothing matches “{query}” with all the selected labels.").into()
+            }
         };
+        if !self.query.is_empty() || !self.label_filter.is_empty() {
+            summary = format!("{summary} · {} of {total} shown", rows.len()).into();
+        }
         self.summary = summary;
         // A filtered-out reminder can't stay open in the details panel.
         if let Some(order) = self.details_for
@@ -477,6 +519,7 @@ impl EventEmitter<RemindersEvent> for RemindersView {}
 
 impl Render for RemindersView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let label_filter = (!self.labels.is_empty()).then(|| self.render_label_filter(cx));
         let theme = cx.theme();
         let details = self
             .details_panel
@@ -538,6 +581,7 @@ impl Render for RemindersView {
                             })),
                     ),
             )
+            .children(label_filter)
             .when_some(self.error.clone(), |this, message| {
                 this.child(
                     // `Alert` has no accessible name of its own; announce the message.
@@ -580,6 +624,43 @@ impl Render for RemindersView {
     }
 }
 
+impl RemindersView {
+    /// One toggle chip per label, and a button to clear the selection.
+    fn render_label_filter(&self, cx: &mut Context<Self>) -> AnyElement {
+        h_flex()
+            .id("label-filter")
+            .role(Role::Group)
+            .aria_label("Filter by labels")
+            .flex_wrap()
+            .gap_1()
+            .items_center()
+            .children(self.labels.iter().enumerate().map(|(ix, label)| {
+                let id = label.id;
+                let checked = self.label_filter.is_selected(id);
+                Toggle::new(("filter-label", ix))
+                    .ghost()
+                    .small()
+                    .px_0p5()
+                    .checked(checked)
+                    .tooltip(format!("Filter by {}", label.title))
+                    .child(label.render(checked, cx))
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_label(id, cx)))
+            }))
+            .when(!self.label_filter.is_empty(), |this| {
+                this.child(
+                    Button::new("clear-label-filter")
+                        .ghost()
+                        .xsmall()
+                        .label("Clear")
+                        .accessibility_label("Clear label filter")
+                        .on_click(cx.listener(|this, _, _, cx| this.clear_labels(cx))),
+                )
+            })
+            .test_support()
+            .into_any_element()
+    }
+}
+
 /// Open a reminders window; see [`RemindersView::new`] for `reminders`.
 pub fn open(
     options: WindowOptions,
@@ -599,7 +680,7 @@ mod tests {
     use std::cell::RefCell;
 
     use gpui_kit::test::{TestEventExt as _, TestQueryExt as _, TestWindowExt as _};
-    use gpui_kit::{Bounds, Point, TestAppContext, WindowBounds, px, size};
+    use gpui_kit::{Bounds, ElementId, Point, TestAppContext, WindowBounds, px, size};
 
     use super::*;
 
@@ -1207,5 +1288,94 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         assert_eq!(*events.borrow(), ["window 2", "browser 2", "browser 1"]);
+    }
+
+    #[gpui_kit::test]
+    fn label_chips_filter_to_tasks_with_every_selected_label(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let label = |id, title: &str| reminders::TaskLabel {
+            id,
+            title: title.into(),
+            rgb: None,
+        };
+        let labelled = |task_id, title: &str, labels: Vec<reminders::TaskLabel>| Reminder {
+            task_id,
+            task_labels: labels,
+            ..reminder(soon, title)
+        };
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let reminders = vec![
+                labelled(1, "Pay rent", vec![label(1, "Bills"), label(2, "Home")]),
+                labelled(2, "Pay phone", vec![label(1, "Bills")]),
+                labelled(3, "Water plants", vec![label(2, "Home")]),
+                labelled(4, "Read", Vec::new()),
+            ];
+            open(options(), "Reminders – Home", Some(reminders), cx).unwrap()
+        });
+        let titles = |cx: &mut TestAppContext| {
+            cx.update(|cx| {
+                let table = view.read(cx).table.read(cx);
+                let mut titles: Vec<_> = (0..)
+                    .map_while(|ix| table.delegate().row(ix).map(|row| row.task.to_string()))
+                    .collect();
+                titles.sort();
+                titles
+            })
+        };
+        let click = |cx: &mut TestAppContext, id: ElementId| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.click(id, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find_by_label("Filter by labels");
+            // Sorted by title: Bills, then Home.
+            window.find_by_label("Filter by Bills");
+            window.find_by_label("Filter by Home");
+            assert!(window.try_find_by_label("Clear label filter").is_none());
+        })
+        .unwrap();
+        assert_eq!(titles(cx).len(), 4, "nothing selected shows everything");
+
+        click(cx, ("filter-label", 0_usize).into());
+        assert_eq!(titles(cx), ["Pay phone", "Pay rent"]);
+        click(cx, ("filter-label", 1_usize).into());
+        assert_eq!(
+            titles(cx),
+            ["Pay rent"],
+            "every selected label must be present"
+        );
+        assert!(cx.update(|cx| view.read(cx).summary.ends_with("· 1 of 4 shown")));
+
+        // Combined with search, both must match.
+        let text = SharedString::from("water");
+        cx.update(|cx| view.update(cx, |view, cx| view.set_search(text, cx)));
+        assert_eq!(titles(cx), Vec::<String>::new());
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find_by_label("Nothing matches “water” with all the selected labels.");
+        })
+        .unwrap();
+        let text = SharedString::default();
+        cx.update(|cx| view.update(cx, |view, cx| view.set_search(text, cx)));
+
+        // Clicking a selected chip deselects it; Clear deselects them all.
+        click(cx, ("filter-label", 0_usize).into());
+        assert_eq!(titles(cx), ["Pay rent", "Water plants"]);
+        click(cx, "clear-label-filter".into());
+        assert_eq!(titles(cx).len(), 4);
+
+        // A reload drops selected labels that no longer appear.
+        click(cx, ("filter-label", 0_usize).into());
+        let reloaded = vec![labelled(3, "Water plants", vec![label(2, "Home")])];
+        cx.update(|cx| view.update(cx, |view, cx| view.set_reminders(&reloaded, None, cx)));
+        assert_eq!(titles(cx), ["Water plants"]);
+        assert!(cx.update(|cx| view.read(cx).label_filter.is_empty()));
     }
 }
