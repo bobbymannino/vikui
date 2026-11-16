@@ -421,10 +421,12 @@ mod tests {
                     task_due: Some("2026-12-01T09:00:00Z".parse().unwrap()),
                     task_labels: vec![
                         reminders::TaskLabel {
+                            id: 1,
                             title: "Bills".into(),
                             rgb: Some(0xff_00_00),
                         },
                         reminders::TaskLabel {
+                            id: 2,
                             title: "Home".into(),
                             rgb: None,
                         },

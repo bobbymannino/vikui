@@ -640,10 +640,12 @@ mod tests {
             let labelled = Reminder {
                 task_labels: vec![
                     reminders::TaskLabel {
+                        id: 1,
                         title: "Bills".into(),
                         rgb: Some(0x19_73_ff),
                     },
                     reminders::TaskLabel {
+                        id: 2,
                         title: "Home".into(),
                         rgb: None,
                     },
