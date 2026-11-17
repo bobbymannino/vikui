@@ -101,7 +101,7 @@ fn go_to(index: usize, cx: &mut App) {
     };
     let on_session_expired = signed_in.on_session_expired;
     // Deferred: a key binding's action runs while GPUI is still updating the window it
-    // was pressed in, and replacing that reminders window from inside would fail.
+    // was pressed in, and bringing that window to the front from inside would fail.
     cx.defer(move |cx| {
         crate::reminders_window::open(
             &source,
@@ -188,19 +188,21 @@ mod tests {
             assert_eq!(cx.windows().len(), 1);
             cx.windows()[0]
         });
-        // Cmd/Ctrl+2 opens Work, in place of Home.
+        // Cmd/Ctrl+2 opens Work beside Home.
         cx.update_window(handle, |_, window, cx| {
             window.key_down("secondary-2", false, cx);
         })
         .unwrap();
         cx.run_until_parked();
         cx.update(|cx| {
-            assert_eq!(cx.windows().len(), 1);
-            let shown = crate::reminders_window::shown_source(cx);
-            assert!(
-                matches!(shown, Some(Source::Project { id: 2, .. })),
-                "{shown:?}"
-            );
+            let ids: Vec<i64> = crate::reminders_window::shown_sources(cx)
+                .into_iter()
+                .filter_map(|source| match source {
+                    Source::Project { id, .. } => Some(id),
+                    _ => None,
+                })
+                .collect();
+            assert_eq!(ids, [1, 2]);
 
             clear(cx);
             assert_eq!(names(&items(cx)), ["No Projects"]);

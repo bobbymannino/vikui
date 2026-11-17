@@ -1,6 +1,6 @@
-//! Opens the reminders window for a project or filter, and the search window for tasks in
-//! every project, and fills them in. There is one of each at a time: opening another
-//! project replaces the reminders window, and a new search reuses the search window.
+//! Opens a reminders window for a project or filter, and the search window for tasks in
+//! every project, and fills them in. Each project or filter gets one window (opening it
+//! again brings that window to the front), and a new search reuses the search window.
 //!
 //! The window's details side panel is a [`ReminderDetailsView`], filled from the tasks
 //! loaded for the list. Marking a task done from the panel, the list or a task window
@@ -40,8 +40,8 @@ impl Loaded {
     }
 }
 
-/// An open window and what loads it, so opening another source replaces or reuses it
-/// instead of piling up windows.
+/// An open window and what loads it, so opening its source again reuses it instead of
+/// piling up windows.
 struct Opened {
     handle: AnyWindowHandle,
     view: WeakEntity<RemindersView>,
@@ -54,10 +54,10 @@ impl Opened {
     }
 }
 
-/// The reminders window (a project or filter) and the search window.
+/// The reminders windows (one per project or filter) and the search window.
 #[derive(Default)]
 struct RemindersWindow {
-    browse: Option<Opened>,
+    browse: Vec<Opened>,
     search: Option<Opened>,
 }
 
@@ -66,8 +66,8 @@ impl Global for RemindersWindow {}
 /// Runs when the server rejects the session for good.
 type OnSessionExpired = Rc<dyn Fn(&mut App)>;
 
-/// Only one reminders window is open at a time: opening the source it already lists
-/// brings it to the front, and opening another replaces it in the same place.
+/// Open a window listing the reminders from `source`, or bring its window to the front
+/// if one is already open. Each project or filter gets its own window.
 ///
 /// `on_session_expired` runs if the server rejects the session for good.
 pub fn open(
@@ -76,36 +76,22 @@ pub fn open(
     on_session_expired: impl Fn(&mut App) + 'static,
     cx: &mut App,
 ) {
-    let previous = cx
-        .default_global::<RemindersWindow>()
-        .browse
-        .take()
-        .filter(|opened| opened.view.upgrade().is_some());
-    let mut bounds = None;
-    if let Some(previous) = previous {
-        let same = previous.source() == *source;
-        let alive = previous
-            .handle
-            .update(cx, |_, window, _| {
-                if same {
-                    window.activate_window();
-                } else {
-                    bounds = Some(window.window_bounds());
-                    window.remove_window();
-                }
-            })
-            .is_ok();
-        if same && alive {
-            cx.default_global::<RemindersWindow>().browse = Some(previous);
-            return;
-        }
+    let windows = &mut cx.default_global::<RemindersWindow>().browse;
+    windows.retain(|opened| opened.view.upgrade().is_some());
+    let existing = windows
+        .iter()
+        .find(|opened| opened.source() == *source)
+        .map(|opened| opened.handle);
+    if let Some(handle) = existing
+        && handle
+            .update(cx, |_, window, _| window.activate_window())
+            .is_ok()
+    {
+        return;
     }
 
     let title = source.title();
-    let mut options = crate::window_options(title.clone(), 1200., 560., cx);
-    if bounds.is_some() {
-        options.window_bounds = bounds;
-    }
+    let options = crate::window_options(title.clone(), 1200., 560., cx);
     let (handle, view) = match reminders_ui::open(options, title, None, cx) {
         Ok(opened) => opened,
         Err(err) => {
@@ -121,7 +107,7 @@ pub fn open(
         Rc::new(on_session_expired),
         cx,
     );
-    cx.default_global::<RemindersWindow>().browse = Some(opened);
+    cx.default_global::<RemindersWindow>().browse.push(opened);
 }
 
 /// Show the tasks matching `text` in every project in the search window, opening it if
@@ -225,13 +211,15 @@ fn fill(
     }
 }
 
-/// What the open reminders window lists.
+/// What the open reminders windows list, in the order they opened.
 #[cfg(test)]
-pub fn shown_source(cx: &App) -> Option<Source> {
+pub fn shown_sources(cx: &App) -> Vec<Source> {
     cx.try_global::<RemindersWindow>()
-        .and_then(|open| open.browse.as_ref())
+        .into_iter()
+        .flat_map(|open| &open.browse)
         .filter(|opened| opened.view.upgrade().is_some())
         .map(Opened::source)
+        .collect()
 }
 
 /// Reload the open reminders and search windows, e.g. after adding a reminder they may
@@ -240,8 +228,7 @@ pub fn reload(cx: &mut App) {
     let loads: Vec<Rc<Loader>> = cx
         .try_global::<RemindersWindow>()
         .into_iter()
-        .flat_map(|open| [open.browse.as_ref(), open.search.as_ref()])
-        .flatten()
+        .flat_map(|open| open.browse.iter().chain(&open.search))
         .filter(|opened| opened.view.upgrade().is_some())
         .map(|opened| Rc::clone(&opened.load))
         .collect();
@@ -552,18 +539,13 @@ mod tests {
     }
 
     /// The open windows, and the source the reminders window lists.
-    fn state(cx: &mut TestAppContext) -> (Vec<AnyWindowHandle>, Option<Source>) {
-        cx.update(|cx| {
-            let source = cx
-                .try_global::<RemindersWindow>()
-                .and_then(|open| open.browse.as_ref())
-                .map(Opened::source);
-            (cx.windows(), source)
-        })
+    /// The open windows, and the sources the reminders windows list.
+    fn state(cx: &mut TestAppContext) -> (Vec<AnyWindowHandle>, Vec<Source>) {
+        cx.update(|cx| (cx.windows(), shown_sources(cx)))
     }
 
     #[gpui_kit::test]
-    fn keeps_one_reminders_window_open(cx: &mut TestAppContext) {
+    fn opens_one_window_per_project(cx: &mut TestAppContext) {
         let session = session();
         let open_source = |source: Source, cx: &mut TestAppContext| {
             let session = Arc::clone(&session);
@@ -579,15 +561,27 @@ mod tests {
         open_source(project(1, "Home"), cx);
         assert_eq!(
             state(cx),
-            (first.clone(), Some(project(1, "Home"))),
+            (first.clone(), vec![project(1, "Home")]),
             "reopening reuses it"
         );
 
         open_source(project(2, "Work"), cx);
-        let (windows, source) = state(cx);
-        assert_eq!(windows.len(), 1, "another project replaces the window");
-        assert_ne!(windows, first);
-        assert_eq!(source, Some(project(2, "Work")));
+        open_source(project(1, "Home"), cx);
+        let (windows, sources) = state(cx);
+        assert_eq!(windows.len(), 2, "another project gets its own window");
+        assert_eq!(sources, [project(1, "Home"), project(2, "Work")]);
+
+        // Once closed, a project opens in a new window again.
+        cx.update(|cx| {
+            first[0]
+                .update(cx, |_, window, _| window.remove_window())
+                .unwrap();
+        });
+        cx.run_until_parked();
+        open_source(project(1, "Home"), cx);
+        let (windows, sources) = state(cx);
+        assert_eq!(windows.len(), 2);
+        assert_eq!(sources, [project(2, "Work"), project(1, "Home")]);
     }
 
     #[gpui_kit::test]
@@ -608,7 +602,7 @@ mod tests {
         };
         let (windows, source) = state(cx);
         assert_eq!(windows.len(), 2, "a search doesn't replace the project");
-        assert_eq!(source, Some(project(1, "Home")));
+        assert_eq!(source, [project(1, "Home")]);
         assert_eq!(search_source(cx), Some(Source::Search("rent".into())));
 
         cx.update(|cx| open_search("car", Arc::clone(&session), |_| {}, cx));
