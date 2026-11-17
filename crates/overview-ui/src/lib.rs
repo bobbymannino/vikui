@@ -3,10 +3,12 @@
 //! The window is a shell: the app passes in the view to show, so this crate does not
 //! depend on other UI crates. Above it, a search field looks for tasks in every project:
 //! Enter reports [`OverviewEvent::Search`] and the app shows the results. Cmd/Ctrl+F
-//! focuses the field; Escape clears it.
+//! focuses the field; Escape clears it. Beside it, a Settings button reports
+//! [`OverviewEvent::OpenSettings`].
 
 use std::rc::Rc;
 
+use gpui_kit::component::button::{Button, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, h_flex, v_flex};
 use gpui_kit::{
@@ -43,6 +45,8 @@ pub fn init(cx: &mut App) {
 pub enum OverviewEvent {
     /// The user searched every project for tasks matching this text (never blank).
     Search(SharedString),
+    /// The user asked to open the settings window.
+    OpenSettings,
 }
 
 /// The main application view: a search field above the current content view.
@@ -101,14 +105,30 @@ impl Render for Overview {
             .bg(theme.background)
             .text_color(theme.foreground)
             .child(
-                h_flex().justify_end().px_6().pt_4().pb_2().child(
-                    Input::new(&self.search)
-                        .id("search-all-tasks")
-                        .aria_label("Search all tasks")
-                        .prefix(Icon::new(IconName::Search).text_color(theme.muted_foreground))
-                        .cleanable(true)
-                        .w(px(SEARCH_WIDTH)),
-                ),
+                h_flex()
+                    .justify_end()
+                    .gap_2()
+                    .px_6()
+                    .pt_4()
+                    .pb_2()
+                    .child(
+                        Input::new(&self.search)
+                            .id("search-all-tasks")
+                            .aria_label("Search all tasks")
+                            .prefix(Icon::new(IconName::Search).text_color(theme.muted_foreground))
+                            .cleanable(true)
+                            .w(px(SEARCH_WIDTH)),
+                    )
+                    .child(
+                        Button::new("open-settings")
+                            .icon(IconName::Settings)
+                            .ghost()
+                            .accessibility_label("Settings")
+                            .tooltip("Settings")
+                            .on_click(cx.listener(|_, _, _, cx| {
+                                cx.emit(OverviewEvent::OpenSettings);
+                            })),
+                    ),
             )
             .child(v_flex().flex_1().min_h_0().child(self.content.clone()))
     }
@@ -156,8 +176,10 @@ mod tests {
         let searches = Rc::new(RefCell::new(Vec::new()));
         cx.update(|cx| {
             let searches = Rc::clone(&searches);
-            cx.subscribe(&view, move |_, OverviewEvent::Search(text), _| {
-                searches.borrow_mut().push(text.to_string());
+            cx.subscribe(&view, move |_, event: &OverviewEvent, _| {
+                if let OverviewEvent::Search(text) = event {
+                    searches.borrow_mut().push(text.to_string());
+                }
             })
             .detach();
         });
@@ -178,5 +200,33 @@ mod tests {
         search("   ", cx);
         search("  rent ", cx);
         assert_eq!(*searches.borrow(), ["rent"]);
+    }
+
+    #[gpui_kit::test]
+    fn settings_button_asks_to_open_settings(cx: &mut TestAppContext) {
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            open(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|_| Empty).into()
+            })
+            .unwrap()
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = Rc::clone(&events);
+            cx.subscribe(&view, move |_, event: &OverviewEvent, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find_by_label("Settings");
+            window.click("open-settings", cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), [OverviewEvent::OpenSettings]);
     }
 }

@@ -151,15 +151,18 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
     });
     match result {
         Ok((_, overview)) => {
-            cx.subscribe(&overview, move |_, OverviewEvent::Search(text), cx| {
-                let expire = search_expire.clone();
-                let session = Arc::clone(&search_session);
-                reminders_window::open_search(
-                    text,
-                    Arc::clone(&search_session),
-                    move |cx| expire(&session, cx),
-                    cx,
-                );
+            cx.subscribe(&overview, move |_, event, cx| match event {
+                OverviewEvent::Search(text) => {
+                    let expire = search_expire.clone();
+                    let session = Arc::clone(&search_session);
+                    reminders_window::open_search(
+                        text,
+                        Arc::clone(&search_session),
+                        move |cx| expire(&session, cx),
+                        cx,
+                    );
+                }
+                OverviewEvent::OpenSettings => settings_window::open(cx),
             })
             .detach();
         }
