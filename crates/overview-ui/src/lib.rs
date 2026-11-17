@@ -101,7 +101,7 @@ impl Render for Overview {
             .bg(theme.background)
             .text_color(theme.foreground)
             .child(
-                h_flex().justify_end().px_6().pt_4().child(
+                h_flex().justify_end().px_6().pt_4().pb_2().child(
                     Input::new(&self.search)
                         .id("search-all-tasks")
                         .aria_label("Search all tasks")
