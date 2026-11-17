@@ -17,6 +17,8 @@ pub struct ProjectRow {
     /// A real project or a saved filter; Favorites is never listed.
     pub kind: ProjectKind,
     pub title: SharedString,
+    /// `0xRRGGBB`, drawn as a dot before the title; `None` for no colour.
+    pub rgb: Option<u32>,
     pub kind_label: SharedString,
     /// To find a project's subprojects when it is opened.
     pub parent_id: Option<i64>,
@@ -38,6 +40,7 @@ impl ProjectRow {
                 id: project.id,
                 kind: project.kind(),
                 title: project.title.clone().into(),
+                rgb: project.rgb(),
                 kind_label: match project.kind() {
                     ProjectKind::SavedFilter { .. } => "Saved filter",
                     ProjectKind::Project | ProjectKind::Favorites => "Project",
@@ -191,13 +194,24 @@ impl TableDelegate for ProjectsTable {
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let text = self.row_text(row_ix, col_ix).cloned().unwrap_or_default();
-        div()
+        let swatch = (Col::at(col_ix) == Some(Col::Title)).then(|| {
+            // Decoration only: the colour is the project's own, and the title names it.
+            let dot = div().flex_none().size_2p5().rounded_full();
+            match self.row(row_ix).and_then(|row| row.rgb) {
+                Some(rgb) => dot.bg(gpui_kit::rgb(rgb)),
+                // Keeps titles aligned with those that have a colour.
+                None => dot,
+            }
+        });
+        h_flex()
             .w_full()
-            .truncate()
+            .gap_2()
+            .items_center()
             .when(Col::at(col_ix) == Some(Col::Description), |cell| {
                 cell.text_color(cx.theme().muted_foreground)
             })
-            .child(text)
+            .children(swatch)
+            .child(div().min_w_0().flex_1().truncate().child(text))
     }
 
     fn cell_label(&self, row_ix: usize, col_ix: usize, _: &App) -> Option<SharedString> {
@@ -239,6 +253,7 @@ mod tests {
             parent_project_id: parent,
             is_archived: false,
             is_favorite: false,
+            hex_color: String::new(),
         }
     }
 
@@ -278,6 +293,23 @@ mod tests {
         assert_eq!(titles, ["Work", "Reports", "Orphan"]);
         let parents: Vec<_> = rows.iter().map(|r| r.parent_id).collect();
         assert_eq!(parents, [None, Some(1), Some(99)]);
+    }
+
+    #[test]
+    fn rows_keep_project_colours() {
+        let rows = ProjectRow::from_projects(&[
+            Project {
+                hex_color: "1973ff".into(),
+                ..project(1, "Work", 0)
+            },
+            project(2, "Home", 0),
+            Project {
+                hex_color: "not a colour".into(),
+                ..project(3, "Bills", 0)
+            },
+        ]);
+        let colours: Vec<_> = rows.iter().map(|r| r.rgb).collect();
+        assert_eq!(colours, [Some(0x19_73_ff), None, None]);
     }
 
     #[test]

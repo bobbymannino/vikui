@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 /// A Vikunja project (`GET /projects`).
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 pub struct Project {
     pub id: i64,
     pub title: String,
@@ -18,6 +18,9 @@ pub struct Project {
     pub is_archived: bool,
     #[serde(default)]
     pub is_favorite: bool,
+    /// `rrggbb`, or empty for none; see [`Project::rgb`].
+    #[serde(default)]
+    pub hex_color: String,
 }
 
 /// What a row from `GET /projects` actually is.
@@ -44,6 +47,12 @@ impl Project {
             id if id < FAVORITES_ID => ProjectKind::SavedFilter { filter_id: -id - 1 },
             _ => ProjectKind::Project,
         }
+    }
+
+    /// The project's colour as `0xRRGGBB`, or `None` when it has none or it is malformed.
+    #[must_use]
+    pub fn rgb(&self) -> Option<u32> {
+        crate::task::parse_rgb(&self.hex_color)
     }
 
     #[must_use]
@@ -103,6 +112,8 @@ mod tests {
         assert_eq!(home.parent_id(), Some(1));
         assert!(home.is_favorite);
         assert_eq!(home.plain_description(), "Chores & errands");
+        assert_eq!(home.rgb(), Some(0xe8_e8_e8));
+        assert_eq!(projects[0].rgb(), None);
     }
 
     #[test]
@@ -125,6 +136,7 @@ mod tests {
             parent_project_id: 0,
             is_archived: false,
             is_favorite: false,
+            hex_color: String::new(),
         };
         assert_eq!(filter(-2).kind(), ProjectKind::SavedFilter { filter_id: 1 });
         assert_eq!(

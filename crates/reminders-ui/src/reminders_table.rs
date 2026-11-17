@@ -24,6 +24,8 @@ use crate::label_tag::LabelTag;
 pub struct ReminderRow {
     pub identifier: SharedString,
     pub task: SharedString,
+    /// `0xRRGGBB`, drawn as a dot before the title; `None` for no colour.
+    rgb: Option<u32>,
     priority: Option<Priority>,
     pub priority_label: SharedString,
     due_at: Option<Timestamp>,
@@ -52,6 +54,7 @@ impl ReminderRow {
             .map(|(order, reminder)| Self {
                 identifier: reminder.task_reference().into(),
                 task: reminder.task_title.clone().into(),
+                rgb: reminder.task_rgb,
                 priority: reminder.task_priority,
                 priority_label: reminder.task_priority.map_or("", Priority::label).into(),
                 due_at: reminder.task_due,
@@ -311,13 +314,29 @@ impl TableDelegate for RemindersTable {
                 .into_any_element();
         }
         let text = self.cell(row_ix, col_ix).cloned().unwrap_or_default();
-        div()
+        let swatch = (Col::at(col_ix) == Some(Col::Task)).then(|| {
+            // Decoration only: the colour is the task's (or its project's), and the
+            // title names it. Muted rows fade it like their text.
+            let dot = div()
+                .flex_none()
+                .size_2p5()
+                .rounded_full()
+                .when(inactive, |dot| dot.opacity(0.5));
+            match row.and_then(|row| row.rgb) {
+                Some(rgb) => dot.bg(gpui_kit::rgb(rgb)),
+                // Keeps titles aligned with those that have a colour.
+                None => dot,
+            }
+        });
+        h_flex()
             .w_full()
-            .truncate()
+            .gap_2()
+            .items_center()
             .when(inactive, |cell| {
                 cell.text_color(cx.theme().muted_foreground)
             })
-            .child(text)
+            .children(swatch)
+            .child(div().min_w_0().flex_1().truncate().child(text))
             .into_any_element()
     }
 
@@ -365,6 +384,7 @@ mod tests {
             task_priority: None,
             task_due: None,
             task_labels: Vec::new(),
+            task_rgb: None,
             project_id: 1,
             task_done: done,
             is_set: true,
@@ -373,6 +393,22 @@ mod tests {
 
     fn titles(table: &RemindersTable) -> Vec<&str> {
         table.rows().iter().map(|row| row.task.as_ref()).collect()
+    }
+
+    #[test]
+    fn rows_keep_the_task_colour() {
+        let coloured = Reminder {
+            task_rgb: Some(0x19_73_ff),
+            ..reminder("2026-12-01T09:00:00Z", "Pay rent", false)
+        };
+        let plain = reminder("2026-12-02T09:00:00Z", "Call landlord", false);
+        let rows = ReminderRow::from_reminders(
+            &[coloured, plain],
+            "2026-11-01T00:00:00Z".parse().unwrap(),
+            &TimeZone::UTC,
+        );
+        let colours: Vec<_> = rows.iter().map(|row| row.rgb).collect();
+        assert_eq!(colours, [Some(0x19_73_ff), None]);
     }
 
     #[test]

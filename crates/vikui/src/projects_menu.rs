@@ -133,6 +133,7 @@ mod tests {
             parent_project_id: 0,
             is_archived: false,
             is_favorite: false,
+            hex_color: String::new(),
         }
     }
 

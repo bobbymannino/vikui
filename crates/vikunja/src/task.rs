@@ -110,9 +110,18 @@ pub struct Task {
     /// was marked done. See [`Task::repeat`].
     #[serde(default)]
     pub repeat_mode: i64,
+    /// `rrggbb`, or empty for none; see [`Task::rgb`].
+    #[serde(default)]
+    pub hex_color: String,
 }
 
 impl Task {
+    /// The task's colour as `0xRRGGBB`, or `None` when it has none or it is malformed.
+    #[must_use]
+    pub fn rgb(&self) -> Option<u32> {
+        parse_rgb(&self.hex_color)
+    }
+
     /// The description as a single line of plain text, with HTML tags removed.
     #[must_use]
     pub fn plain_description(&self) -> String {
@@ -153,12 +162,18 @@ impl Label {
     /// The label's colour as `0xRRGGBB`, or `None` when it has none or it is malformed.
     #[must_use]
     pub fn rgb(&self) -> Option<u32> {
-        let hex = self.hex_color.trim().trim_start_matches('#');
-        if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-            return None;
-        }
-        u32::from_str_radix(hex, 16).ok()
+        parse_rgb(&self.hex_color)
     }
+}
+
+/// A Vikunja colour (`rrggbb`, with or without `#`) as `0xRRGGBB`; `None` when it is
+/// empty or malformed.
+pub(crate) fn parse_rgb(hex_color: &str) -> Option<u32> {
+    let hex = hex_color.trim().trim_start_matches('#');
+    if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(hex, 16).ok()
 }
 
 /// How a task repeats.
@@ -312,6 +327,12 @@ mod tests {
             }]
         );
         assert_eq!(task.labels[0].rgb(), Some(0xff_00_00));
+        assert_eq!(task.rgb(), None);
+        let coloured = Task {
+            hex_color: "#00ff7f".into(),
+            ..Task::default()
+        };
+        assert_eq!(coloured.rgb(), Some(0x00_ff_7f));
         let color = |hex: &str| {
             Label {
                 hex_color: hex.into(),
