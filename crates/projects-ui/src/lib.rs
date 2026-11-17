@@ -41,6 +41,8 @@ pub enum ProjectsEvent {
     },
     /// The user opened a saved filter, the same way.
     OpenSavedFilter { filter_id: i64, title: SharedString },
+    /// The projects (and saved filters) loaded, on open or after a refresh.
+    Loaded(Vec<Project>),
 }
 
 /// Register the projects view's key bindings. Call once at startup.
@@ -107,7 +109,7 @@ impl ProjectsView {
 
         let load = Arc::clone(&self.load_projects);
         let task = cx.background_spawn(async move {
-            load().map(|projects| ProjectRow::from_projects(&projects))
+            load().map(|projects| (ProjectRow::from_projects(&projects), projects))
         });
         self.load_task = Some(cx.spawn_in(window, async move |this, cx| {
             let result = task.await;
@@ -118,17 +120,18 @@ impl ProjectsView {
 
     fn finish_load(
         &mut self,
-        result: Result<Vec<ProjectRow>, vikunja::Error>,
+        result: Result<(Vec<ProjectRow>, Vec<Project>), vikunja::Error>,
         cx: &mut Context<Self>,
     ) {
         self.loading = false;
         match result {
-            Ok(rows) => {
+            Ok((rows, projects)) => {
                 self.summary = summary(&rows);
                 self.table.update(cx, |table, cx| {
                     table.delegate_mut().set_rows(rows);
                     cx.notify();
                 });
+                cx.emit(ProjectsEvent::Loaded(projects));
             }
             Err(vikunja::Error::Unauthorized) => {
                 log::info!("session expired while loading projects");
@@ -455,11 +458,14 @@ mod tests {
             .unwrap();
         assert_eq!(
             *events.borrow(),
-            [ProjectsEvent::OpenProject {
-                id: 2,
-                title: "Home".into(),
-                subproject_ids: Vec::new(),
-            }]
+            [
+                ProjectsEvent::Loaded(vec![project(1, "Work"), project(2, "Home")]),
+                ProjectsEvent::OpenProject {
+                    id: 2,
+                    title: "Home".into(),
+                    subproject_ids: Vec::new(),
+                }
+            ]
         );
     }
 
@@ -495,7 +501,7 @@ mod tests {
         cx.update_window(handle, |_, window, cx| window.press("enter", cx))
             .unwrap();
         assert_eq!(
-            *events.borrow(),
+            events.borrow()[1..],
             [ProjectsEvent::OpenSavedFilter {
                 filter_id: 2,
                 title: "Due this week".into()

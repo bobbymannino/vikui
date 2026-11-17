@@ -12,13 +12,19 @@ use crate::app_actions::{
 #[cfg(target_os = "macos")]
 use crate::app_actions::{Hide, HideOthers, ShowAll};
 
-/// Install the menu bar. Call after [`crate::app_actions::init`], so the menus pick up
-/// its key bindings.
+/// Install the menu bar. Call after [`crate::app_actions::init`] and
+/// [`crate::projects_menu::init`], so the menus pick up their key bindings.
 pub fn init(cx: &mut App) {
-    cx.set_menus(menus());
+    refresh(cx);
 }
 
-fn menus() -> Vec<Menu> {
+/// Rebuild the menu bar, e.g. after the projects listed in it change.
+pub fn refresh(cx: &mut App) {
+    let projects = crate::projects_menu::items(cx);
+    cx.set_menus(menus(projects));
+}
+
+fn menus(projects: Vec<MenuItem>) -> Vec<Menu> {
     vec![
         app_menu(),
         Menu::new("File").items([
@@ -36,6 +42,7 @@ fn menus() -> Vec<Menu> {
             MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
         ]),
         Menu::new("View").items([MenuItem::action("Refresh", Refresh)]),
+        Menu::new("Projects").items(projects),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),
             MenuItem::action("Zoom", Zoom),
@@ -86,9 +93,12 @@ mod tests {
 
     #[test]
     fn has_the_standard_menus() {
-        let menus = menus();
+        let menus = menus(Vec::new());
         let titles: Vec<&str> = menus.iter().map(|menu| menu.name.as_ref()).collect();
-        assert_eq!(titles, ["Vikui", "File", "Edit", "View", "Window"]);
+        assert_eq!(
+            titles,
+            ["Vikui", "File", "Edit", "View", "Projects", "Window"]
+        );
         assert!(menus.iter().any(|menu| names(menu).contains(&"Refresh")));
         assert!(
             menus

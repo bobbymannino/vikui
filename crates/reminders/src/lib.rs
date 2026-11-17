@@ -8,7 +8,10 @@ use std::collections::BTreeSet;
 
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
-use vikunja::{Client, Error, RelativeReminder, RelativeTo, Repeat, Task, TaskQuery, Token};
+use vikunja::{
+    Client, Error, Project, ProjectKind, RelativeReminder, RelativeTo, Repeat, Task, TaskQuery,
+    Token,
+};
 
 /// One reminder, flattened out of its task, or a task that has no reminder set.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -494,6 +497,90 @@ impl Source {
     }
 }
 
+/// A project or saved filter to go to, e.g. from the menu bar.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Destination {
+    /// The title, after its parents' for a subproject: `Home › Bills`.
+    pub name: String,
+    pub source: Source,
+}
+
+/// Where `projects` (from `GET /projects`) can be opened: the projects in the server's
+/// order, each with its subprojects, then the saved filters. Favorites is left out.
+#[must_use]
+pub fn destinations(projects: &[Project]) -> Vec<Destination> {
+    let parent_of = |id: i64| {
+        projects
+            .iter()
+            .find(|project| project.id == id)
+            .and_then(Project::parent_id)
+    };
+    let title_of = |id: i64| {
+        projects
+            .iter()
+            .find(|project| project.id == id)
+            .map(|project| project.title.as_str())
+    };
+    let path = |project: &Project| {
+        let mut names = vec![project.title.as_str()];
+        let mut parent = project.parent_id();
+        // The length check stops a malformed parent cycle from looping forever.
+        while let Some(id) = parent
+            && names.len() <= projects.len()
+        {
+            names.extend(title_of(id));
+            parent = parent_of(id);
+        }
+        names.reverse();
+        names.join(" › ")
+    };
+    let mut filters = Vec::new();
+    let mut found: Vec<Destination> = Vec::new();
+    for project in projects {
+        match project.kind() {
+            ProjectKind::Project => found.push(Destination {
+                name: path(project),
+                source: Source::Project {
+                    id: project.id,
+                    title: project.title.clone(),
+                    subproject_ids: subproject_ids(projects, project.id),
+                },
+            }),
+            ProjectKind::SavedFilter { filter_id } => filters.push(Destination {
+                name: project.title.clone(),
+                source: Source::SavedFilter {
+                    filter_id,
+                    title: project.title.clone(),
+                },
+            }),
+            ProjectKind::Favorites => {}
+        }
+    }
+    found.extend(filters);
+    found
+}
+
+/// Every project below `project_id`, at any depth.
+fn subproject_ids(projects: &[Project], project_id: i64) -> Vec<i64> {
+    let mut found: Vec<i64> = Vec::new();
+    let mut next = 0;
+    let mut parent = Some(project_id);
+    while let Some(current) = parent {
+        for project in projects {
+            // The `contains` check stops a malformed parent cycle from looping forever.
+            if project.parent_id() == Some(current)
+                && project.id != project_id
+                && !found.contains(&project.id)
+            {
+                found.push(project.id);
+            }
+        }
+        parent = found.get(next).copied();
+        next += 1;
+    }
+    found
+}
+
 fn describe_relative(relative: RelativeReminder) -> String {
     let date = match relative.to {
         RelativeTo::Due => "due date",
@@ -758,6 +845,54 @@ mod tests {
         let mut reminder = from_tasks(&[task(1, "Pay rent", Vec::new())]).remove(0);
         reminder.task_labels = labels.to_vec();
         reminder
+    }
+
+    #[test]
+    fn lists_projects_with_their_paths_then_saved_filters() {
+        let project = |id: i64, title: &str, parent: i64| Project {
+            id,
+            title: title.into(),
+            description: String::new(),
+            identifier: String::new(),
+            parent_project_id: parent,
+            is_archived: false,
+            is_favorite: false,
+        };
+        let projects = [
+            project(-1, "Favorites", 0),
+            project(-3, "This week", 0),
+            project(1, "Home", 0),
+            project(2, "Bills", 1),
+            project(3, "Rent", 2),
+            project(4, "Work", 0),
+        ];
+        let found = destinations(&projects);
+        let names: Vec<&str> = found.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(
+            names,
+            [
+                "Home",
+                "Home › Bills",
+                "Home › Bills › Rent",
+                "Work",
+                "This week"
+            ]
+        );
+        assert_eq!(
+            found[0].source,
+            Source::Project {
+                id: 1,
+                title: "Home".into(),
+                subproject_ids: vec![2, 3],
+            }
+        );
+        assert_eq!(
+            found[4].source,
+            Source::SavedFilter {
+                filter_id: 2,
+                title: "This week".into(),
+            }
+        );
     }
 
     #[test]
