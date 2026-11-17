@@ -153,12 +153,18 @@ impl Label {
     /// The label's colour as `0xRRGGBB`, or `None` when it has none or it is malformed.
     #[must_use]
     pub fn rgb(&self) -> Option<u32> {
-        let hex = self.hex_color.trim().trim_start_matches('#');
-        if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
-            return None;
-        }
-        u32::from_str_radix(hex, 16).ok()
+        parse_rgb(&self.hex_color)
     }
+}
+
+/// A Vikunja colour (`rrggbb`, with or without `#`) as `0xRRGGBB`; `None` when it is
+/// empty or malformed.
+pub(crate) fn parse_rgb(hex_color: &str) -> Option<u32> {
+    let hex = hex_color.trim().trim_start_matches('#');
+    if hex.len() != 6 || !hex.chars().all(|c| c.is_ascii_hexdigit()) {
+        return None;
+    }
+    u32::from_str_radix(hex, 16).ok()
 }
 
 /// How a task repeats.

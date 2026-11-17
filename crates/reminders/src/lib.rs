@@ -857,6 +857,7 @@ mod tests {
             parent_project_id: parent,
             is_archived: false,
             is_favorite: false,
+            hex_color: String::new(),
         };
         let projects = [
             project(-1, "Favorites", 0),
