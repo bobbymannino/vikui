@@ -1,7 +1,6 @@
 //! Table delegate listing the user's projects.
 
 use std::cmp::Ordering;
-use std::collections::HashMap;
 
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
@@ -19,8 +18,8 @@ pub struct ProjectRow {
     pub kind: ProjectKind,
     pub title: SharedString,
     pub kind_label: SharedString,
+    /// To find a project's subprojects when it is opened.
     pub parent_id: Option<i64>,
-    pub parent: SharedString,
     pub identifier: SharedString,
     pub description: SharedString,
     /// Position in the server's order, used to undo sorting.
@@ -28,13 +27,9 @@ pub struct ProjectRow {
 }
 
 impl ProjectRow {
-    /// Build rows from an API response: projects and saved filters, with parent names
-    /// resolved. The built-in Favorites list is left out.
+    /// Build rows from an API response: projects and saved filters. The built-in
+    /// Favorites list is left out.
     pub fn from_projects(projects: &[Project]) -> Vec<Self> {
-        let titles: HashMap<i64, &str> = projects
-            .iter()
-            .map(|project| (project.id, project.title.as_str()))
-            .collect();
         projects
             .iter()
             .filter(|project| project.kind() != ProjectKind::Favorites)
@@ -49,10 +44,6 @@ impl ProjectRow {
                 }
                 .into(),
                 parent_id: project.parent_id(),
-                parent: project
-                    .parent_id()
-                    .and_then(|id| titles.get(&id))
-                    .map_or_else(SharedString::default, |title| (*title).to_owned().into()),
                 identifier: project.identifier.clone().into(),
                 description: project.plain_description().into(),
                 order,
@@ -65,18 +56,11 @@ impl ProjectRow {
 enum Col {
     Title,
     Kind,
-    Parent,
     Identifier,
     Description,
 }
 
-const COLUMNS: [Col; 5] = [
-    Col::Title,
-    Col::Kind,
-    Col::Parent,
-    Col::Identifier,
-    Col::Description,
-];
+const COLUMNS: [Col; 4] = [Col::Title, Col::Kind, Col::Identifier, Col::Description];
 
 impl Col {
     fn at(ix: usize) -> Option<Self> {
@@ -87,7 +71,6 @@ impl Col {
         match self {
             Self::Title => &row.title,
             Self::Kind => &row.kind_label,
-            Self::Parent => &row.parent,
             Self::Identifier => &row.identifier,
             Self::Description => &row.description,
         }
@@ -177,7 +160,6 @@ impl TableDelegate for ProjectsTable {
         let column = match Col::at(col_ix) {
             Some(Col::Title) => Column::new("title", "Title").width(260.),
             Some(Col::Kind) => Column::new("kind", "Type").width(120.),
-            Some(Col::Parent) => Column::new("parent", "Parent").width(180.),
             Some(Col::Identifier) => Column::new("identifier", "Identifier").width(110.),
             Some(Col::Description) => Column::new("description", "Description").width(420.),
             None => return Column::default(),
@@ -285,7 +267,7 @@ mod tests {
     }
 
     #[test]
-    fn rows_skip_favorites_and_name_parents() {
+    fn rows_skip_favorites_and_keep_parents() {
         let rows = ProjectRow::from_projects(&[
             project(-1, "Favorites", 0),
             project(1, "Work", 0),
@@ -294,9 +276,8 @@ mod tests {
         ]);
         let titles: Vec<_> = rows.iter().map(|r| r.title.as_ref()).collect();
         assert_eq!(titles, ["Work", "Reports", "Orphan"]);
-        assert_eq!(rows[0].parent, "");
-        assert_eq!(rows[1].parent, "Work");
-        assert_eq!(rows[2].parent, "");
+        let parents: Vec<_> = rows.iter().map(|r| r.parent_id).collect();
+        assert_eq!(parents, [None, Some(1), Some(99)]);
     }
 
     #[test]
@@ -342,14 +323,18 @@ mod tests {
     #[test]
     fn empty_values_sort_last() {
         let mut table = ProjectsTable::default();
+        let with_identifier = |id: i64, title: &str, identifier: &str| Project {
+            identifier: identifier.into(),
+            ..project(id, title, 0)
+        };
         table.set_rows(ProjectRow::from_projects(&[
-            project(1, "Work", 0),
-            project(2, "Child", 1),
-            project(3, "Home", 0),
+            with_identifier(1, "Work", ""),
+            with_identifier(2, "Home", "HOME"),
+            with_identifier(3, "Bills", ""),
         ]));
-        table.sort = Some((Col::Parent, ColumnSort::Ascending));
+        table.sort = Some((Col::Identifier, ColumnSort::Ascending));
         table.apply_sort();
         let titles: Vec<_> = table.rows().iter().map(|r| r.title.as_ref()).collect();
-        assert_eq!(titles, ["Child", "Work", "Home"]);
+        assert_eq!(titles, ["Home", "Work", "Bills"]);
     }
 }
