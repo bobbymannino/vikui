@@ -225,6 +225,15 @@ fn fill(
     }
 }
 
+/// What the open reminders window lists.
+#[cfg(test)]
+pub fn shown_source(cx: &App) -> Option<Source> {
+    cx.try_global::<RemindersWindow>()
+        .and_then(|open| open.browse.as_ref())
+        .filter(|opened| opened.view.upgrade().is_some())
+        .map(Opened::source)
+}
+
 /// Reload the open reminders and search windows, e.g. after adding a reminder they may
 /// list.
 pub fn reload(cx: &mut App) {

@@ -7,6 +7,7 @@ mod app_preferences;
 mod app_session;
 mod edit_task_window;
 mod new_reminder_window;
+mod projects_menu;
 mod reminders_window;
 mod settings_window;
 mod task_window;
@@ -40,6 +41,7 @@ fn main() {
     app.run(|cx| {
         gpui_kit::init(cx);
         app_actions::init(cx);
+        projects_menu::init(cx);
         overview_ui::init(cx);
         projects_ui::init(cx);
         reminders_ui::init(cx);
@@ -120,6 +122,7 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
         cx.subscribe(&view, move |_, event, cx| {
             let source = match event {
                 ProjectsEvent::SessionExpired => return expire(&session, cx),
+                ProjectsEvent::Loaded(projects) => return projects_menu::set(projects, cx),
                 ProjectsEvent::OpenProject {
                     id,
                     title,
@@ -167,6 +170,7 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
 /// Forget the expired session, close its windows and go back to the sign-in window.
 fn sign_out(session: &Session, cx: &mut App) {
     app_session::clear(cx);
+    projects_menu::clear(cx);
     cx.background_spawn(async {
         if let Err(err) = login::credentials::clear() {
             log::warn!("failed to clear expired credentials: {err:#}");
