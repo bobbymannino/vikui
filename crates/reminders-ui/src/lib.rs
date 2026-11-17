@@ -875,6 +875,7 @@ mod tests {
             task_priority: None,
             task_due: None,
             task_labels: Vec::new(),
+            task_rgb: None,
             project_id: 1,
             task_done: false,
             is_set: true,

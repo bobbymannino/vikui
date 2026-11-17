@@ -1,7 +1,7 @@
 use serde::Deserialize;
 
 /// A Vikunja project (`GET /projects`).
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Deserialize)]
 pub struct Project {
     pub id: i64,
     pub title: String,

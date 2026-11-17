@@ -271,15 +271,18 @@ impl Loader {
         let session = Arc::clone(&self.session);
         let load = cx.background_spawn(async move {
             let tasks = session.call(|client, token| source.tasks(client, token))?;
-            // Only names projects in the details panel, so the list still shows without it.
+            // Only names projects in the details panel and colours tasks without a colour
+            // of their own, so the list still shows without it.
             let projects = session
                 .call(Client::projects)
-                .inspect_err(|err| log::warn!("failed to load project names: {err:#}"))
-                .unwrap_or_default()
+                .inspect_err(|err| log::warn!("failed to load projects: {err:#}"))
+                .unwrap_or_default();
+            let mut reminders = reminders::from_tasks(&tasks);
+            reminders::fill_project_colours(&mut reminders, &projects);
+            let projects = projects
                 .into_iter()
                 .map(|project| (project.id, project.title))
                 .collect();
-            let reminders = reminders::from_tasks(&tasks);
             log::debug!(
                 "{source:?}: {} tasks, {} reminders",
                 tasks.len(),

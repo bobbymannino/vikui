@@ -28,6 +28,9 @@ pub struct Reminder {
     pub task_due: Option<Timestamp>,
     /// The task's labels, in its order.
     pub task_labels: Vec<TaskLabel>,
+    /// The task's colour as `0xRRGGBB`, or its project's (see
+    /// [`fill_project_colours`]); `None` when neither has one.
+    pub task_rgb: Option<u32>,
     pub project_id: i64,
     pub task_done: bool,
     /// `false` for a task listed without any reminder set on it.
@@ -278,6 +281,7 @@ pub fn from_tasks(tasks: &[Task]) -> Vec<Reminder> {
                         rgb: label.rgb(),
                     })
                     .collect(),
+                task_rgb: task.rgb(),
                 project_id: task.project_id,
                 task_done: task.done,
                 is_set,
@@ -494,6 +498,16 @@ impl Source {
             Self::Filter(filter) => Some(TaskQuery::filter(filter.clone())),
             Self::Search(text) => Some(TaskQuery::search(text.clone())),
         }
+    }
+}
+
+/// Give each of `reminders` without a colour of its own its project's, from `projects`.
+pub fn fill_project_colours(reminders: &mut [Reminder], projects: &[Project]) {
+    for reminder in reminders.iter_mut().filter(|r| r.task_rgb.is_none()) {
+        reminder.task_rgb = projects
+            .iter()
+            .find(|project| project.id == reminder.project_id)
+            .and_then(Project::rgb);
     }
 }
 
@@ -845,6 +859,38 @@ mod tests {
         let mut reminder = from_tasks(&[task(1, "Pay rent", Vec::new())]).remove(0);
         reminder.task_labels = labels.to_vec();
         reminder
+    }
+
+    #[test]
+    fn tasks_without_a_colour_take_their_projects() {
+        let coloured = Task {
+            hex_color: "ff0000".into(),
+            ..task(1, "Red", Vec::new())
+        };
+        let plain = task(2, "Plain", Vec::new());
+        let elsewhere = Task {
+            project_id: 9,
+            ..task(3, "Elsewhere", Vec::new())
+        };
+        let mut reminders = from_tasks(&[coloured, plain, elsewhere]);
+        let home = Project {
+            id: 1,
+            hex_color: "00ff00".into(),
+            ..Project::default()
+        };
+        fill_project_colours(&mut reminders, &[home]);
+        let colours: Vec<_> = reminders
+            .iter()
+            .map(|r| (r.task_title.as_str(), r.task_rgb))
+            .collect();
+        assert_eq!(
+            colours,
+            [
+                ("Red", Some(0xff_00_00)),
+                ("Plain", Some(0x00_ff_00)),
+                ("Elsewhere", None)
+            ]
+        );
     }
 
     #[test]
