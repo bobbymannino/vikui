@@ -249,42 +249,13 @@ fn fields(prefix: &'static str, fields: &[Field], cx: &App) -> Vec<impl IntoElem
 impl Render for ReminderDetailsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
-        let header = h_flex()
-            .gap_2()
-            .items_start()
-            .child(
-                v_flex()
-                    .flex_1()
-                    .min_w_0()
-                    .child({
-                        let title = self
-                            .content
-                            .as_ref()
-                            .map_or_else(SharedString::default, |c| c.title.clone());
-                        div()
-                            .id("details-title")
-                            .role(Role::Heading)
-                            .aria_label(title.clone())
-                            .text_lg()
-                            .font_weight(FontWeight::SEMIBOLD)
-                            .child(title)
-                            .test_support()
-                    })
-                    .when_some(
-                        self.content
-                            .as_ref()
-                            .map(|c| c.identifier.clone())
-                            .filter(|id| !id.is_empty()),
-                        |this, identifier| {
-                            this.child(
-                                div()
-                                    .text_sm()
-                                    .text_color(theme.muted_foreground)
-                                    .child(identifier),
-                            )
-                        },
-                    ),
-            )
+        // The actions get a row of their own, so the title can use the panel's width.
+        let actions = h_flex()
+            .id("details-actions")
+            .role(Role::Toolbar)
+            .aria_label("Task actions")
+            .gap_1()
+            .justify_end()
             .child(
                 Button::new("edit-task")
                     .label("Edit")
@@ -343,6 +314,38 @@ impl Render for ReminderDetailsView {
                             ),
                     )
             });
+        let header = v_flex().gap_2().child(actions.test_support()).child(
+            v_flex()
+                .min_w_0()
+                .child({
+                    let title = self
+                        .content
+                        .as_ref()
+                        .map_or_else(SharedString::default, |c| c.title.clone());
+                    div()
+                        .id("details-title")
+                        .role(Role::Heading)
+                        .aria_label(title.clone())
+                        .text_lg()
+                        .font_weight(FontWeight::SEMIBOLD)
+                        .child(title)
+                        .test_support()
+                })
+                .when_some(
+                    self.content
+                        .as_ref()
+                        .map(|c| c.identifier.clone())
+                        .filter(|id| !id.is_empty()),
+                    |this, identifier| {
+                        this.child(
+                            div()
+                                .text_sm()
+                                .text_color(theme.muted_foreground)
+                                .child(identifier),
+                        )
+                    },
+                ),
+        );
 
         let done_button = self.task.map(|task| {
             let label = if task.done {
@@ -707,6 +710,7 @@ mod tests {
             assert!(window.try_find_by_label("Close details").is_none());
             window.find_by_label("Open in browser");
             window.find_by_label("Edit task");
+            window.find_by_label("Task actions");
         })
         .unwrap();
     }
