@@ -1,17 +1,23 @@
 //! Vikui's settings window.
 //!
-//! Shows what the app is (its name, version and a link to its source) and lets the user
-//! update it. The app supplies [`About`] and the [`UpdateStatus`], and does the checking
-//! and installing when the view asks through [`SettingsEvent`]; this crate never fetches.
+//! Shows what the app is (its name, version and a link to its source), lets the user pick
+//! its appearance and colour themes, and lets them update it. The app supplies [`About`],
+//! the [`ThemeChoices`] and the [`UpdateStatus`], and applies themes, checks and installs
+//! when the view asks through [`SettingsEvent`]; this crate never fetches or saves.
 
+use gpui_kit::base::Selectable as _;
 use gpui_kit::base::TestSupportExt as _;
-use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
+use gpui_kit::component::form::{field, v_form};
+use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::switch::Switch;
-use gpui_kit::component::{ActiveTheme as _, Disableable as _, h_flex, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Disableable as _, IndexPath, Sizable as _, h_flex, v_flex,
+};
 use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, Context, Entity, EventEmitter, FontWeight,
     InteractiveElement as _, IntoElement, ParentElement as _, Render, Role, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Window, WindowOptions, div,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Window, WindowOptions, div,
     prelude::FluentBuilder as _,
 };
 
@@ -24,6 +30,40 @@ pub struct About {
     pub version: SharedString,
     /// Where the app's source lives.
     pub repository: SharedString,
+}
+
+/// Whether the app looks light or dark.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Appearance {
+    Light,
+    Dark,
+    /// Follow the system's appearance.
+    #[default]
+    Auto,
+}
+
+impl Appearance {
+    pub const ALL: [Self; 3] = [Self::Light, Self::Dark, Self::Auto];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Light => "Light",
+            Self::Dark => "Dark",
+            Self::Auto => "Auto",
+        }
+    }
+}
+
+/// The appearance and themes the user picked, and the themes they can pick from.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ThemeChoices {
+    pub appearance: Appearance,
+    /// The theme shown while light; one of `light_themes`.
+    pub light: SharedString,
+    /// The theme shown while dark; one of `dark_themes`.
+    pub dark: SharedString,
+    pub light_themes: Vec<SharedString>,
+    pub dark_themes: Vec<SharedString>,
 }
 
 /// Where checking for and installing updates stands.
@@ -68,8 +108,14 @@ impl UpdateStatus {
 }
 
 /// What the user asked for, for the app to act on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SettingsEvent {
+    /// The user picked how the app looks; apply and save it.
+    SetAppearance(Appearance),
+    /// The user picked the theme shown while light, by name; apply and save it.
+    SetLightTheme(SharedString),
+    /// The user picked the theme shown while dark, by name; apply and save it.
+    SetDarkTheme(SharedString),
     /// Check for a newer version, then call [`SettingsView::set_update_status`].
     CheckForUpdates,
     /// Install the available version and restart.
@@ -85,22 +131,124 @@ pub struct SettingsView {
     update: UpdateStatus,
     update_message: SharedString,
     check_on_open: bool,
+    appearance: Appearance,
+    light_theme: Entity<ThemeSelect>,
+    dark_theme: Entity<ThemeSelect>,
+    _theme_events: [Subscription; 2],
 }
+
+type ThemeSelect = SelectState<Vec<SharedString>>;
 
 impl EventEmitter<SettingsEvent> for SettingsView {}
 
 impl SettingsView {
-    /// `check_on_open` is the saved "Check for updates on open" preference.
-    pub fn new(about: About, check_on_open: bool) -> Self {
+    /// `check_on_open` is the saved "Check for updates on open" preference and `theme`
+    /// the saved appearance and themes.
+    pub fn new(
+        about: About,
+        check_on_open: bool,
+        theme: ThemeChoices,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let version_label = format!("Version {}", about.version).into();
         let update = UpdateStatus::default();
+        let select = |names: Vec<SharedString>,
+                      picked: &SharedString,
+                      window: &mut Window,
+                      cx: &mut Context<Self>| {
+            let selected = names.iter().position(|name| name == picked);
+            cx.new(|cx| SelectState::new(names, selected.map(IndexPath::new), window, cx))
+        };
+        let light_theme = select(theme.light_themes, &theme.light, window, cx);
+        let dark_theme = select(theme.dark_themes, &theme.dark, window, cx);
+        let theme_events = [
+            cx.subscribe(
+                &light_theme,
+                |_, _, event: &SelectEvent<Vec<SharedString>>, cx| {
+                    if let SelectEvent::Confirm(Some(name)) = event {
+                        cx.emit(SettingsEvent::SetLightTheme(name.clone()));
+                    }
+                },
+            ),
+            cx.subscribe(
+                &dark_theme,
+                |_, _, event: &SelectEvent<Vec<SharedString>>, cx| {
+                    if let SelectEvent::Confirm(Some(name)) = event {
+                        cx.emit(SettingsEvent::SetDarkTheme(name.clone()));
+                    }
+                },
+            ),
+        ];
         Self {
             about,
             version_label,
             update_message: update.message(),
             update,
             check_on_open,
+            appearance: theme.appearance,
+            light_theme,
+            dark_theme,
+            _theme_events: theme_events,
         }
+    }
+
+    #[must_use]
+    pub fn appearance(&self) -> Appearance {
+        self.appearance
+    }
+
+    fn set_appearance(&mut self, appearance: Appearance, cx: &mut Context<Self>) {
+        if self.appearance != appearance {
+            self.appearance = appearance;
+            cx.emit(SettingsEvent::SetAppearance(appearance));
+            cx.notify();
+        }
+    }
+
+    fn render_appearance(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        v_flex()
+            .id("settings-appearance")
+            .role(Role::Group)
+            .aria_label("Appearance")
+            .test_support()
+            .gap_2()
+            .pt_4()
+            .child(
+                ButtonGroup::new("appearance-buttons")
+                    .outline()
+                    .small()
+                    .children(Appearance::ALL.iter().enumerate().map(|(ix, appearance)| {
+                        Button::new(("appearance", ix))
+                            .label(appearance.label())
+                            .accessibility_label(format!("{} appearance", appearance.label()))
+                            .selected(*appearance == self.appearance)
+                    }))
+                    .on_click(cx.listener(|this, clicked: &Vec<usize>, _, cx| {
+                        if let Some(appearance) =
+                            clicked.first().and_then(|ix| Appearance::ALL.get(*ix))
+                        {
+                            this.set_appearance(*appearance, cx);
+                        }
+                    })),
+            )
+            .child(
+                v_form()
+                    .child(
+                        field().label("Light theme").child(
+                            Select::new(&self.light_theme)
+                                .id("light-theme")
+                                .accessibility_label("Light theme"),
+                        ),
+                    )
+                    .child(
+                        field().label("Dark theme").child(
+                            Select::new(&self.dark_theme)
+                                .id("dark-theme")
+                                .accessibility_label("Dark theme"),
+                        ),
+                    ),
+            )
     }
 
     #[must_use]
@@ -171,7 +319,7 @@ impl SettingsView {
                         .disabled(busy)
                         .on_click(cx.listener(move |this, _, _, cx| {
                             if !this.update.busy() {
-                                cx.emit(event);
+                                cx.emit(event.clone());
                             }
                         })),
                 ),
@@ -229,20 +377,21 @@ impl Render for SettingsView {
                         .on_click(move |_, _, cx| cx.open_url(&repository)),
                 ),
             )
+            .child(self.render_appearance(cx))
             .child(self.render_updates(cx))
     }
 }
 
-/// Open the settings window.
-/// Open the settings window; see [`SettingsView::new`] for `check_on_open`.
+/// Open the settings window; see [`SettingsView::new`] for `check_on_open` and `theme`.
 pub fn open(
     options: WindowOptions,
     about: About,
     check_on_open: bool,
+    theme: ThemeChoices,
     cx: &mut App,
 ) -> gpui_kit::Result<(AnyWindowHandle, Entity<SettingsView>)> {
-    gpui_kit::open_window(options, cx, |_, cx| {
-        cx.new(|_| SettingsView::new(about, check_on_open))
+    gpui_kit::open_window(options, cx, |window, cx| {
+        cx.new(|cx| SettingsView::new(about, check_on_open, theme, window, cx))
     })
 }
 
@@ -262,7 +411,15 @@ mod tests {
         };
         let handle = cx.update(|cx| {
             gpui_kit::init(cx);
-            open(WindowOptions::default(), about, true, cx).unwrap().0
+            open(
+                WindowOptions::default(),
+                about,
+                true,
+                ThemeChoices::default(),
+                cx,
+            )
+            .unwrap()
+            .0
         });
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
@@ -289,13 +446,22 @@ mod tests {
         };
         let (handle, view) = cx.update(|cx| {
             gpui_kit::init(cx);
-            open(WindowOptions::default(), about, true, cx).unwrap()
+            open(
+                WindowOptions::default(),
+                about,
+                true,
+                ThemeChoices::default(),
+                cx,
+            )
+            .unwrap()
         });
         let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         cx.update(|cx| {
             let events = std::rc::Rc::clone(&events);
-            cx.subscribe(&view, move |_, event, _| events.borrow_mut().push(*event))
-                .detach();
+            cx.subscribe(&view, move |_, event, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
         });
         let click = |cx: &mut TestAppContext, id: &'static str| {
             cx.update_window(handle, |_, window, cx| {
@@ -358,6 +524,76 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn picks_the_appearance_and_themes(cx: &mut TestAppContext) {
+        let about = About {
+            name: "Vikui".into(),
+            version: "1.2.3".into(),
+            repository: "https://example.com/vikui".into(),
+        };
+        let theme = ThemeChoices {
+            appearance: Appearance::Auto,
+            light: "Solarized Light".into(),
+            dark: "Default Dark".into(),
+            light_themes: vec!["Default Light".into(), "Solarized Light".into()],
+            dark_themes: vec!["Default Dark".into(), "Gruvbox Dark".into()],
+        };
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            open(WindowOptions::default(), about, true, theme, cx).unwrap()
+        });
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = std::rc::Rc::clone(&events);
+            cx.subscribe(&view, move |_, event, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find_by_label("Appearance");
+            window.find_by_label("Light theme");
+            window.find_by_label("Dark theme");
+            window.find_by_label("Auto appearance");
+            window.click(gpui_kit::ElementId::from(("appearance", 1_usize)), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.update(|cx| view.read(cx).appearance()), Appearance::Dark);
+        cx.update(|cx| {
+            let view = view.read(cx);
+            assert_eq!(
+                view.light_theme
+                    .read(cx)
+                    .selected_value()
+                    .map(AsRef::as_ref),
+                Some("Solarized Light")
+            );
+            assert_eq!(
+                view.dark_theme.read(cx).selected_value().map(AsRef::as_ref),
+                Some("Default Dark")
+            );
+        });
+
+        // Confirming a theme in a picker reports it.
+        cx.update(|cx| {
+            let dark = view.read(cx).dark_theme.clone();
+            dark.update(cx, |_, cx| {
+                cx.emit(SelectEvent::Confirm(Some("Gruvbox Dark".into())));
+            });
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            *events.borrow(),
+            [
+                SettingsEvent::SetAppearance(Appearance::Dark),
+                SettingsEvent::SetDarkTheme("Gruvbox Dark".into()),
+            ]
+        );
+    }
+
+    #[gpui_kit::test]
     fn toggles_checking_for_updates_on_open(cx: &mut TestAppContext) {
         let about = About {
             name: "Vikui".into(),
@@ -366,13 +602,22 @@ mod tests {
         };
         let (handle, view) = cx.update(|cx| {
             gpui_kit::init(cx);
-            open(WindowOptions::default(), about, false, cx).unwrap()
+            open(
+                WindowOptions::default(),
+                about,
+                false,
+                ThemeChoices::default(),
+                cx,
+            )
+            .unwrap()
         });
         let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
         cx.update(|cx| {
             let events = std::rc::Rc::clone(&events);
-            cx.subscribe(&view, move |_, event, _| events.borrow_mut().push(*event))
-                .detach();
+            cx.subscribe(&view, move |_, event, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
         });
         let toggle = |cx: &mut TestAppContext| {
             cx.update_window(handle, |_, window, cx| {

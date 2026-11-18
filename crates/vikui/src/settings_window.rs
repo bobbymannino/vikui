@@ -8,7 +8,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use gpui_kit::{AnyWindowHandle, App, AppContext as _, Entity, Global, WeakEntity};
-use settings_ui::{About, SettingsEvent, SettingsView, UpdateStatus};
+use settings_ui::{About, SettingsEvent, SettingsView, ThemeChoices, UpdateStatus};
 use updater::{Release, Updater};
 
 /// The open settings window, so a second request focuses it instead of opening another.
@@ -90,9 +90,10 @@ fn open_view(cx: &mut App) -> Option<(Opened, bool)> {
     let title = format!("Settings – {}", crate::APP_NAME);
     let options = crate::window_options(title, 480., 400., cx);
     let check_on_open = crate::app_preferences::get(cx).check_for_updates_on_open;
-    let (handle, view) = settings_ui::open(options, about(), check_on_open, cx)
-        .inspect_err(|err| log::error!("failed to open settings window: {err:#}"))
-        .ok()?;
+    let (handle, view) =
+        settings_ui::open(options, about(), check_on_open, ThemeChoices::default(), cx)
+            .inspect_err(|err| log::error!("failed to open settings window: {err:#}"))
+            .ok()?;
     let opened = Opened {
         handle,
         view: view.downgrade(),
@@ -125,6 +126,9 @@ impl Updates {
         cx.subscribe(view, move |_, event, cx| match *event {
             SettingsEvent::CheckForUpdates => updates.check(cx),
             SettingsEvent::InstallUpdate => updates.install(cx),
+            SettingsEvent::SetAppearance(_)
+            | SettingsEvent::SetLightTheme(_)
+            | SettingsEvent::SetDarkTheme(_) => {}
             SettingsEvent::SetCheckForUpdatesOnOpen(on) => {
                 crate::app_preferences::update(cx, |preferences| {
                     preferences.check_for_updates_on_open = on;
