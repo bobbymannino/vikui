@@ -5,6 +5,7 @@ mod app_actions;
 mod app_menu;
 mod app_preferences;
 mod app_session;
+mod app_theme;
 mod edit_task_window;
 mod new_reminder_window;
 mod projects_menu;
@@ -40,6 +41,7 @@ fn main() {
     let app = gpui_kit::application().with_assets(gpui_kit::assets::Assets);
     app.run(|cx| {
         gpui_kit::init(cx);
+        app_theme::init(cx);
         app_actions::init(cx);
         projects_menu::init(cx);
         overview_ui::init(cx);
@@ -53,8 +55,10 @@ fn main() {
         // Remove what the last update left behind (the old executable on Windows).
         cx.background_spawn(async { updater::clean_up() }).detach();
 
-        // Windows restore their table layouts from the preferences, so open them after.
+        // Windows restore their table layouts from the preferences, so open them after,
+        // in the saved theme.
         app_preferences::load(cx, |preferences, cx| {
+            app_theme::apply(&preferences.theme, cx);
             open_initial_window(cx);
             if preferences.check_for_updates_on_open {
                 settings_window::check_on_launch(cx);
