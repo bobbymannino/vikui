@@ -5912,6 +5912,7 @@ version = "0.6.1"
 dependencies = [
  "gpui-kit",
  "log",
+ "table-layout",
  "vikunja",
 ]
 
@@ -6392,6 +6393,7 @@ dependencies = [
  "jiff 1.0.0",
  "log",
  "reminders",
+ "table-layout",
  "vikunja",
 ]
 

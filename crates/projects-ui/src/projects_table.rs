@@ -5,9 +5,10 @@ use std::cmp::Ordering;
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::{
-    App, Context, IntoElement, ParentElement as _, SharedString, Styled as _, Window, div,
+    App, Context, IntoElement, ParentElement as _, Pixels, SharedString, Styled as _, Window, div,
     prelude::FluentBuilder as _,
 };
+use table_layout::{Columns, SortDirection};
 use vikunja::{Project, ProjectKind};
 
 /// One table row, prepared off the main thread so rendering only clones `SharedString`s.
@@ -55,7 +56,7 @@ impl ProjectRow {
     }
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum Col {
     Title,
     Kind,
@@ -65,9 +66,34 @@ enum Col {
 
 const COLUMNS: [Col; 4] = [Col::Title, Col::Kind, Col::Identifier, Col::Description];
 
+impl table_layout::Column for Col {
+    fn key(self) -> &'static str {
+        match self {
+            Self::Title => "title",
+            Self::Kind => "kind",
+            Self::Identifier => "identifier",
+            Self::Description => "description",
+        }
+    }
+
+    fn default_width(self) -> u32 {
+        match self {
+            Self::Title => 260,
+            Self::Kind => 120,
+            Self::Identifier => 110,
+            Self::Description => 420,
+        }
+    }
+}
+
 impl Col {
-    fn at(ix: usize) -> Option<Self> {
-        COLUMNS.get(ix).copied()
+    fn name(self) -> &'static str {
+        match self {
+            Self::Title => "Title",
+            Self::Kind => "Type",
+            Self::Identifier => "Identifier",
+            Self::Description => "Description",
+        }
     }
 
     fn text(self, row: &ProjectRow) -> &SharedString {
@@ -80,11 +106,21 @@ impl Col {
     }
 }
 
-#[derive(Default)]
 pub struct ProjectsTable {
     rows: Vec<ProjectRow>,
     loading: bool,
-    sort: Option<(Col, ColumnSort)>,
+    /// Their order, widths and sort, as the user left them.
+    columns: Columns<Col>,
+}
+
+impl Default for ProjectsTable {
+    fn default() -> Self {
+        Self {
+            rows: Vec::new(),
+            loading: false,
+            columns: Columns::new(&COLUMNS),
+        }
+    }
 }
 
 impl ProjectsTable {
@@ -128,14 +164,16 @@ impl ProjectsTable {
     }
 
     fn row_text(&self, row_ix: usize, col_ix: usize) -> Option<&SharedString> {
-        Some(Col::at(col_ix)?.text(self.rows.get(row_ix)?))
+        Some(self.columns.get(col_ix)?.text(self.rows.get(row_ix)?))
     }
 
     fn apply_sort(&mut self) {
-        match self.sort {
-            Some((col, ColumnSort::Ascending)) => self.rows.sort_by(|a, b| compare(col, a, b)),
-            Some((col, ColumnSort::Descending)) => self.rows.sort_by(|a, b| compare(col, b, a)),
-            Some((_, ColumnSort::Default)) | None => self.rows.sort_by_key(|row| row.order),
+        match self.columns.sort() {
+            Some((col, SortDirection::Ascending)) => self.rows.sort_by(|a, b| compare(col, a, b)),
+            Some((col, SortDirection::Descending)) => {
+                self.rows.sort_by(|a, b| compare(col, b, a));
+            }
+            None => self.rows.sort_by_key(|row| row.order),
         }
     }
 }
@@ -150,6 +188,19 @@ fn compare(col: Col, a: &ProjectRow, b: &ProjectRow) -> Ordering {
         .then_with(|| a.order.cmp(&b.order))
 }
 
+fn column_sort(direction: SortDirection) -> ColumnSort {
+    match direction {
+        SortDirection::Ascending => ColumnSort::Ascending,
+        SortDirection::Descending => ColumnSort::Descending,
+    }
+}
+
+fn width_pixels(width: u32) -> Pixels {
+    // Saved widths are well below 2^24, so they convert to `f32` exactly.
+    #[expect(clippy::cast_precision_loss, reason = "column widths are small")]
+    gpui_kit::px(width as f32)
+}
+
 impl TableDelegate for ProjectsTable {
     fn columns_count(&self, _: &App) -> usize {
         COLUMNS.len()
@@ -160,18 +211,17 @@ impl TableDelegate for ProjectsTable {
     }
 
     fn column(&self, col_ix: usize, _: &App) -> Column {
-        let column = match Col::at(col_ix) {
-            Some(Col::Title) => Column::new("title", "Title").width(260.),
-            Some(Col::Kind) => Column::new("kind", "Type").width(120.),
-            Some(Col::Identifier) => Column::new("identifier", "Identifier").width(110.),
-            Some(Col::Description) => Column::new("description", "Description").width(420.),
-            None => return Column::default(),
+        let (Some(col), Some(width)) = (self.columns.get(col_ix), self.columns.width(col_ix))
+        else {
+            return Column::default();
         };
-        let sort = match self.sort {
-            Some((col, sort)) if Col::at(col_ix) == Some(col) => sort,
+        let sort = match self.columns.sort() {
+            Some((sorted, direction)) if sorted == col => column_sort(direction),
             _ => ColumnSort::Default,
         };
-        column.sort(sort)
+        Column::new(table_layout::Column::key(col), col.name())
+            .width(width_pixels(width))
+            .sort(sort)
     }
 
     fn perform_sort(
@@ -181,9 +231,25 @@ impl TableDelegate for ProjectsTable {
         _: &mut Window,
         cx: &mut Context<TableState<Self>>,
     ) {
-        self.sort = Col::at(col_ix).map(|col| (col, sort));
+        let direction = match sort {
+            ColumnSort::Ascending => Some(SortDirection::Ascending),
+            ColumnSort::Descending => Some(SortDirection::Descending),
+            ColumnSort::Default => None,
+        };
+        let sort = self.columns.get(col_ix).zip(direction);
+        self.columns.set_sort(sort);
         self.apply_sort();
         cx.notify();
+    }
+
+    fn move_column(
+        &mut self,
+        col_ix: usize,
+        to_ix: usize,
+        _: &mut Window,
+        _: &mut Context<TableState<Self>>,
+    ) {
+        self.columns.move_column(col_ix, to_ix);
     }
 
     fn render_td(
@@ -194,7 +260,8 @@ impl TableDelegate for ProjectsTable {
         cx: &mut Context<TableState<Self>>,
     ) -> impl IntoElement {
         let text = self.row_text(row_ix, col_ix).cloned().unwrap_or_default();
-        let swatch = (Col::at(col_ix) == Some(Col::Title)).then(|| {
+        let col = self.columns.get(col_ix);
+        let swatch = (col == Some(Col::Title)).then(|| {
             // Decoration only: the colour is the project's own, and the title names it.
             let dot = div().flex_none().size_2p5().rounded_full();
             match self.row(row_ix).and_then(|row| row.rgb) {
@@ -207,7 +274,7 @@ impl TableDelegate for ProjectsTable {
             .w_full()
             .gap_2()
             .items_center()
-            .when(Col::at(col_ix) == Some(Col::Description), |cell| {
+            .when(col == Some(Col::Description), |cell| {
                 cell.text_color(cx.theme().muted_foreground)
             })
             .children(swatch)
@@ -328,6 +395,22 @@ mod tests {
     }
 
     #[test]
+    fn cells_follow_a_moved_column() {
+        let mut table = ProjectsTable::default();
+        table.set_rows(ProjectRow::from_projects(&[Project {
+            identifier: "HOME".into(),
+            ..project(1, "Home", 0)
+        }]));
+        // Drag Identifier (third) to the front.
+        table.columns.move_column(2, 0);
+        let cells: Vec<_> = (0..COLUMNS.len())
+            .map(|col_ix| table.row_text(0, col_ix).map(ToString::to_string))
+            .collect();
+        assert_eq!(cells[0].as_deref(), Some("HOME"));
+        assert_eq!(cells[1].as_deref(), Some("Home"));
+    }
+
+    #[test]
     fn sorting_cycles_back_to_server_order() {
         let mut table = ProjectsTable::default();
         table.set_rows(ProjectRow::from_projects(&[
@@ -339,15 +422,19 @@ mod tests {
             t.rows().iter().map(|r| r.title.to_string()).collect()
         };
 
-        table.sort = Some((Col::Title, ColumnSort::Ascending));
+        table
+            .columns
+            .set_sort(Some((Col::Title, SortDirection::Ascending)));
         table.apply_sort();
         assert_eq!(titles(&table), ["Alpha", "beta", "gamma"]);
 
-        table.sort = Some((Col::Title, ColumnSort::Descending));
+        table
+            .columns
+            .set_sort(Some((Col::Title, SortDirection::Descending)));
         table.apply_sort();
         assert_eq!(titles(&table), ["gamma", "beta", "Alpha"]);
 
-        table.sort = Some((Col::Title, ColumnSort::Default));
+        table.columns.set_sort(None);
         table.apply_sort();
         assert_eq!(titles(&table), ["beta", "Alpha", "gamma"]);
     }
@@ -364,7 +451,9 @@ mod tests {
             with_identifier(2, "Home", "HOME"),
             with_identifier(3, "Bills", ""),
         ]));
-        table.sort = Some((Col::Identifier, ColumnSort::Ascending));
+        table
+            .columns
+            .set_sort(Some((Col::Identifier, SortDirection::Ascending)));
         table.apply_sort();
         let titles: Vec<_> = table.rows().iter().map(|r| r.title.as_ref()).collect();
         assert_eq!(titles, ["Home", "Work", "Bills"]);
