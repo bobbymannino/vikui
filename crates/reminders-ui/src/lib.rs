@@ -35,9 +35,7 @@ use std::rc::Rc;
 
 use gpui_kit::base::{Selectable as _, TestSupportExt as _};
 use gpui_kit::component::alert::Alert;
-use gpui_kit::component::button::{
-    Button, ButtonGroup, ButtonVariants as _, Toggle, ToggleVariants as _,
-};
+use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_kit::component::input::{Input, InputEvent, InputState};
 use gpui_kit::component::table::{DataTable, TableEvent, TableState};
 use gpui_kit::component::{
@@ -793,12 +791,17 @@ impl RemindersView {
             .children(self.labels.iter().enumerate().map(|(ix, label)| {
                 let id = label.id;
                 let checked = self.label_filter.is_selected(id);
-                Toggle::new(("filter-label", ix))
+                let name: SharedString = format!("Filter by {}", label.title).into();
+                // A toggled button rather than `Toggle`, which draws no focus ring, so the
+                // focused label stands out when tabbing through many.
+                Button::new(("filter-label", ix))
                     .ghost()
                     .small()
                     .px_0p5()
-                    .checked(checked)
-                    .tooltip(format!("Filter by {}", label.title))
+                    .selected(checked)
+                    .toggled(checked)
+                    .accessibility_label(name.clone())
+                    .tooltip(name)
                     .child(label.render(checked, cx))
                     .on_click(cx.listener(move |this, _, _, cx| this.toggle_label(id, cx)))
             }))
@@ -1628,6 +1631,53 @@ mod tests {
             *events.borrow(),
             ["edit 2", "window 2", "browser 2", "browser 1", "edit 1"]
         );
+    }
+
+    /// The chips are kit buttons so they draw the focus ring; they must still be reachable
+    /// by Tab and report their pressed state.
+    #[gpui_kit::test]
+    fn label_chips_take_focus_and_report_pressed(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let (handle, _view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let reminders = vec![Reminder {
+                task_labels: vec![reminders::TaskLabel {
+                    id: 1,
+                    title: "Bills".into(),
+                    rgb: None,
+                }],
+                ..reminder(soon, "Pay rent")
+            }];
+            open(options(), "Reminders – Home", Some(reminders), cx).unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let chip = window.find_by_label("Filter by Bills");
+            assert_eq!(chip.checked(), Some(false));
+            assert_ne!(chip.focused(), Some(true));
+            window.click(ElementId::from(("filter-label", 0_usize)), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        // Tab through the window until the chip has keyboard focus.
+        let reached = cx
+            .update_window(handle, |_, window, cx| {
+                (0..20).any(|_| {
+                    window.focus_next(cx);
+                    window.render_frame(cx);
+                    window.find_by_label("Filter by Bills").focused() == Some(true)
+                })
+            })
+            .unwrap();
+        assert!(reached, "Tab must reach the label chip");
+        cx.update_window(handle, |_, window, _| {
+            assert_eq!(
+                window.find_by_label("Filter by Bills").checked(),
+                Some(true)
+            );
+        })
+        .unwrap();
     }
 
     #[gpui_kit::test]
