@@ -9,6 +9,7 @@ publish.workspace = true
 [dependencies]
 gpui-kit.workspace = true
 log.workspace = true
+table-layout.workspace = true
 vikunja.workspace = true
 
 [dev-dependencies]

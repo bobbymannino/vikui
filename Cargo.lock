@@ -5860,6 +5860,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "table-layout",
  "tempfile",
 ]
 
@@ -5912,6 +5913,7 @@ version = "0.6.1"
 dependencies = [
  "gpui-kit",
  "log",
+ "table-layout",
  "vikunja",
 ]
 
@@ -6392,6 +6394,7 @@ dependencies = [
  "jiff 1.0.0",
  "log",
  "reminders",
+ "table-layout",
  "vikunja",
 ]
 
@@ -7420,6 +7423,14 @@ checksum = "8e1d1b10ced5ca923a1fcb8d03e96b8d3268065d724548c0211415ff6ac6bac4"
 dependencies = [
  "core-foundation-sys",
  "libc",
+]
+
+[[package]]
+name = "table-layout"
+version = "0.6.1"
+dependencies = [
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

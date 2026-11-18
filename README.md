@@ -87,7 +87,10 @@ downloads it, checks its SHA-256 checksum, replaces itself and relaunches. Prere
 are never offered.
 
 Preferences are saved in `preferences.json` in `~/Library/Application Support/vikui` on
-macOS, `~/.config/vikui` on Linux and `%APPDATA%\vikui` on Windows.
+macOS, `~/.config/vikui` on Linux and `%APPDATA%\vikui` on Windows. They include how you
+last arranged the projects and reminders tables: drag a header to move its column, drag
+a header's edge to resize it and click a sort icon to sort, and windows opened later
+come back the same way.
 
 Vikui must be able to write to the folder it is installed in. On macOS, move
 `Vikui.app` to **Applications** first; copies built from source update with `cargo install`.

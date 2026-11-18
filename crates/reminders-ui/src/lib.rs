@@ -51,6 +51,7 @@ use gpui_kit::{
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use reminders::{LabelFilter, Reminder, Search, StatusFilter};
+use table_layout::TableLayout;
 
 use label_tag::LabelTag;
 use reminders_table::{ReminderRow, RemindersTable, RowCommand};
@@ -130,6 +131,9 @@ pub enum RemindersEvent {
     /// In a search window: the user asked to search every project for this text (never
     /// blank). Answer with [`RemindersView::set_reminders`] or [`RemindersView::set_error`].
     Search(SharedString),
+    /// The user moved, resized or sorted a column. Save the layout and restore it with
+    /// [`RemindersView::set_table_layout`].
+    TableLayoutChanged(TableLayout),
 }
 
 /// What the search field does.
@@ -167,7 +171,10 @@ pub struct RemindersView {
     details_panel: Option<AnyView>,
     /// `order` of the reminder the details panel is open on.
     details_for: Option<usize>,
+    /// The table layout last reported or restored, by [`RemindersTable::layout_revision`].
+    layout_revision: u64,
     _table_events: Subscription,
+    _table_layout: Subscription,
     _search_events: Subscription,
 }
 
@@ -210,7 +217,19 @@ impl RemindersView {
             }
             TableEvent::DoubleClickedRow(row_ix) => this.open_task(*row_ix, cx),
             TableEvent::ClearSelection => this.hide_details(cx),
+            TableEvent::ColumnWidthsChanged(widths) => this.table.update(cx, |table, cx| {
+                table.delegate_mut().set_widths(widths);
+                cx.notify();
+            }),
             _ => {}
+        });
+        // Moves, resizes and sorts all notify the table; report the layout once it changed.
+        let table_layout = cx.observe(&table, |this, table, cx| {
+            let table = table.read(cx).delegate();
+            if table.layout_revision() != this.layout_revision {
+                this.layout_revision = table.layout_revision();
+                cx.emit(RemindersEvent::TableLayoutChanged(table.layout()));
+            }
         });
 
         let search = cx.new(|cx| {
@@ -257,7 +276,9 @@ impl RemindersView {
             matched_tasks: None,
             details_panel: None,
             details_for: None,
+            layout_revision: 0,
             _table_events: table_events,
+            _table_layout: table_layout,
             _search_events: search_events,
         };
         match reminders {
@@ -268,6 +289,17 @@ impl RemindersView {
             }),
         }
         this
+    }
+
+    /// Arrange the table's columns and sort as the user last left them, from a
+    /// [`RemindersEvent::TableLayoutChanged`].
+    pub fn set_table_layout(&mut self, layout: &TableLayout, cx: &mut Context<Self>) {
+        self.layout_revision = self.table.update(cx, |table, cx| {
+            table.delegate_mut().set_layout(layout);
+            table.refresh(cx);
+            cx.notify();
+            table.delegate().layout_revision()
+        });
     }
 
     /// Replace the listed reminders.
@@ -1635,6 +1667,128 @@ mod tests {
 
     /// The chips are kit buttons so they draw the focus ring; they must still be reachable
     /// by Tab and report their pressed state.
+    #[gpui_kit::test]
+    fn reports_and_restores_the_table_layout(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            open(
+                options(),
+                "Reminders – Home",
+                Some(vec![reminder(soon, "Pay rent")]),
+                cx,
+            )
+            .unwrap()
+        });
+        let layouts = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let layouts = Rc::clone(&layouts);
+            cx.subscribe(&view, move |_, event: &RemindersEvent, _| {
+                if let RemindersEvent::TableLayoutChanged(layout) = event {
+                    layouts.borrow_mut().push(layout.clone());
+                }
+            })
+            .detach();
+        });
+        let last = |layouts: &RefCell<Vec<TableLayout>>| {
+            layouts
+                .borrow()
+                .last()
+                .cloned()
+                .expect("a layout was reported")
+        };
+        let keys = |layout: &TableLayout| -> Vec<String> {
+            layout.columns.iter().map(|col| col.key.clone()).collect()
+        };
+
+        // Sort by Due.
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(ElementId::from(("icon-sort", 3_usize)), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let sort = last(&layouts).sort.expect("sorted");
+        assert_eq!(sort.column, "due");
+        assert_eq!(layouts.borrow().len(), 1);
+
+        // Widen Task by dragging its right edge.
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            // The resize handle straddles the header's right edge.
+            let header = window
+                .find(ElementId::from(("col-header", 1_usize)))
+                .bounds();
+            let edge = Point::new(header.right() - px(1.), header.center().y);
+            window.drag(edge, edge + Point::new(px(60.), px(0.)), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let widened = last(&layouts);
+        let task = widened
+            .columns
+            .iter()
+            .find(|col| col.key == "task")
+            .unwrap();
+        assert!(task.width > 380, "Task widened from 340 to {}", task.width);
+
+        // Drag Due to the front.
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let due = window
+                .find(ElementId::from(("col-header", 3_usize)))
+                .bounds();
+            let first = window
+                .find(ElementId::from(("col-header", 0_usize)))
+                .bounds();
+            // Left of the first header's middle, so Due lands before it.
+            let target = Point::new(first.left() + px(8.), first.center().y);
+            window.drag(due.center(), target, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let saved = last(&layouts);
+        assert_eq!(
+            keys(&saved),
+            ["due", "identifier", "task", "priority", "labels"]
+        );
+
+        // Another window takes the saved layout, without reporting it back.
+        let reported = layouts.borrow().len();
+        let (_, restored) = cx.update(|cx| {
+            open(
+                options(),
+                "Reminders – Work",
+                Some(vec![reminder(soon, "Plan")]),
+                cx,
+            )
+            .unwrap()
+        });
+        cx.update(|cx| {
+            let layouts = Rc::clone(&layouts);
+            cx.subscribe(&restored, move |_, event: &RemindersEvent, _| {
+                if let RemindersEvent::TableLayoutChanged(layout) = event {
+                    layouts.borrow_mut().push(layout.clone());
+                }
+            })
+            .detach();
+            restored.update(cx, |view, cx| view.set_table_layout(&saved, cx));
+        });
+        cx.run_until_parked();
+        assert_eq!(layouts.borrow().len(), reported);
+        cx.update(|cx| {
+            let table = restored.read(cx).table.read(cx);
+            assert_eq!(
+                table.headers(cx),
+                ["Due", "Task ID", "Task", "Priority", "Labels"]
+            );
+            let width = f32::from(u16::try_from(task.width).unwrap());
+            assert_eq!(table.col_width(2), Some(px(width)), "Task keeps its width");
+            assert_eq!(table.delegate().layout(), saved);
+        });
+    }
+
     #[gpui_kit::test]
     fn label_chips_take_focus_and_report_pressed(cx: &mut TestAppContext) {
         let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);

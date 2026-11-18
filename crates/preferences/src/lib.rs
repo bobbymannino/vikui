@@ -11,6 +11,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
+use table_layout::TableLayout;
 
 const FOLDER: &str = "vikui";
 const FILE: &str = "preferences.json";
@@ -22,14 +23,27 @@ const FILE: &str = "preferences.json";
 pub struct Preferences {
     /// Look for a newer release when the app opens.
     pub check_for_updates_on_open: bool,
+    /// How the user last arranged each table.
+    pub tables: Tables,
 }
 
 impl Default for Preferences {
     fn default() -> Self {
         Self {
             check_for_updates_on_open: true,
+            tables: Tables::default(),
         }
     }
+}
+
+/// The saved layout of each table: its column order, widths and sort.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct Tables {
+    /// The project list in the main window.
+    pub projects: TableLayout,
+    /// Every reminders and search window; they share one layout.
+    pub reminders: TableLayout,
 }
 
 impl Preferences {
@@ -103,6 +117,7 @@ mod tests {
         let path = dir.path().join(FOLDER).join(FILE);
         let off = Preferences {
             check_for_updates_on_open: false,
+            ..Preferences::default()
         };
         off.save_to(&path).unwrap();
         assert_eq!(Preferences::load_from(&path), off);
@@ -120,6 +135,35 @@ mod tests {
         let path = dir.path().join(FILE);
         fs::write(&path, r#"{"from_a_newer_version": 1}"#).unwrap();
         assert_eq!(Preferences::load_from(&path), Preferences::default());
+    }
+
+    #[test]
+    fn saves_and_loads_table_layouts() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        let mut preferences = Preferences::default();
+        preferences.tables.reminders = TableLayout {
+            columns: vec![table_layout::ColumnLayout {
+                key: "due".into(),
+                width: 180,
+            }],
+            sort: Some(table_layout::Sort {
+                column: "due".into(),
+                direction: table_layout::SortDirection::Descending,
+            }),
+        };
+        preferences.save_to(&path).unwrap();
+        assert_eq!(Preferences::load_from(&path), preferences);
+    }
+
+    #[test]
+    fn files_from_before_table_layouts_still_load() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        fs::write(&path, r#"{"check_for_updates_on_open": false}"#).unwrap();
+        let loaded = Preferences::load_from(&path);
+        assert!(!loaded.check_for_updates_on_open);
+        assert_eq!(loaded.tables, Tables::default());
     }
 
     #[test]
