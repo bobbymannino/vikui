@@ -66,8 +66,12 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &NewReminder, cx| crate::new_reminder_window::open(cx));
     cx.on_action(|_: &Refresh, cx| {
         // Each list view has its own refresh action; only the focused one handles it.
-        cx.dispatch_action(&projects_ui::Refresh);
-        cx.dispatch_action(&reminders_ui::Refresh);
+        // This binding outranks the views' own when focus sits in a nested context (such
+        // as a table), so it must reach the window the same deferred way.
+        with_active_window(cx, |window, cx| {
+            window.dispatch_action(Box::new(projects_ui::Refresh), cx);
+            window.dispatch_action(Box::new(reminders_ui::Refresh), cx);
+        });
     });
 }
 
@@ -91,7 +95,8 @@ fn with_active_window(cx: &mut App, f: impl FnOnce(&mut Window, &mut App) + 'sta
 mod tests {
     use gpui_kit::test::TestEventExt as _;
     use gpui_kit::{
-        AppContext as _, Context, IntoElement, Render, TestAppContext, WindowOptions, div,
+        AppContext as _, Context, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+        TestAppContext, WindowOptions, div,
     };
 
     use super::*;
@@ -120,6 +125,57 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         assert!(cx.update(|cx| cx.windows().is_empty()));
+    }
+
+    /// Stands in for a list view: refreshes on its own action, with focus in a nested
+    /// context the way a focused table puts it.
+    struct List {
+        focus_handle: gpui_kit::FocusHandle,
+        refreshed: bool,
+    }
+
+    impl Render for List {
+        fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+            div()
+                .key_context("Reminders")
+                .on_action(cx.listener(|this, _: &reminders_ui::Refresh, _, _| {
+                    this.refreshed = true;
+                }))
+                .child(
+                    div()
+                        .key_context("DataTable")
+                        .track_focus(&self.focus_handle),
+                )
+        }
+    }
+
+    #[gpui_kit::test]
+    fn mod_r_refreshes_with_focus_in_a_nested_context(cx: &mut TestAppContext) {
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            reminders_ui::init(cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |_, cx| {
+                cx.new(|cx| List {
+                    focus_handle: cx.focus_handle(),
+                    refreshed: false,
+                })
+            })
+            .unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            window.activate_window();
+            let focus_handle = view.read(cx).focus_handle.clone();
+            focus_handle.focus(window, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update_window(handle, |_, window, cx| {
+            window.key_down("secondary-r", false, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert!(cx.update(|cx| view.read(cx).refreshed));
     }
 
     #[gpui_kit::test]
