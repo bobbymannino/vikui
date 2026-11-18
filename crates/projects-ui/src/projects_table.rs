@@ -8,7 +8,7 @@ use gpui_kit::{
     App, Context, IntoElement, ParentElement as _, Pixels, SharedString, Styled as _, Window, div,
     prelude::FluentBuilder as _,
 };
-use table_layout::{Columns, SortDirection};
+use table_layout::{Columns, SortDirection, TableLayout};
 use vikunja::{Project, ProjectKind};
 
 /// One table row, prepared off the main thread so rendering only clones `SharedString`s.
@@ -163,6 +163,28 @@ impl ProjectsTable {
         found
     }
 
+    /// The column order, widths and sort to save.
+    pub fn layout(&self) -> TableLayout {
+        self.columns.layout()
+    }
+
+    /// Changes whenever the user moves, resizes or sorts a column.
+    pub fn layout_revision(&self) -> u64 {
+        self.columns.revision()
+    }
+
+    /// Show the columns and sort as saved; refresh the table afterwards.
+    pub fn set_layout(&mut self, layout: &TableLayout) {
+        self.columns.apply(layout);
+        self.apply_sort();
+    }
+
+    /// Keep the widths the user resized the columns to, in display order.
+    pub fn set_widths(&mut self, widths: &[Pixels]) {
+        self.columns
+            .set_widths(widths.iter().map(|&width| whole_pixels(width)));
+    }
+
     fn row_text(&self, row_ix: usize, col_ix: usize) -> Option<&SharedString> {
         Some(self.columns.get(col_ix)?.text(self.rows.get(row_ix)?))
     }
@@ -199,6 +221,18 @@ fn width_pixels(width: u32) -> Pixels {
     // Saved widths are well below 2^24, so they convert to `f32` exactly.
     #[expect(clippy::cast_precision_loss, reason = "column widths are small")]
     gpui_kit::px(width as f32)
+}
+
+/// A column width rounded to whole logical pixels, as saved.
+fn whole_pixels(width: Pixels) -> u32 {
+    let width = f32::from(width).round().max(0.);
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "rounded, non-negative and far below u32::MAX"
+    )]
+    let width = width as u32;
+    width
 }
 
 impl TableDelegate for ProjectsTable {

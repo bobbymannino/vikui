@@ -408,7 +408,10 @@ fn attach_details_panel(
                 task_window::open_in_browser(&server, *task_id, cx);
             }
             RemindersEvent::EditTask { task_id } => crate::edit_task_window::open(*task_id, cx),
-            RemindersEvent::Refresh | RemindersEvent::NewReminder | RemindersEvent::Search(_) => {}
+            RemindersEvent::Refresh
+            | RemindersEvent::NewReminder
+            | RemindersEvent::Search(_)
+            | RemindersEvent::TableLayoutChanged(_) => {}
         }
     })
     .detach();

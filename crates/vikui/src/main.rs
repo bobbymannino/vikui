@@ -123,6 +123,7 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
             let source = match event {
                 ProjectsEvent::SessionExpired => return expire(&session, cx),
                 ProjectsEvent::Loaded(projects) => return projects_menu::set(projects, cx),
+                ProjectsEvent::TableLayoutChanged(_) => return,
                 ProjectsEvent::OpenProject {
                     id,
                     title,

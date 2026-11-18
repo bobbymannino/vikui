@@ -16,6 +16,7 @@ use gpui_kit::{
     ParentElement as _, Render, Role, SharedString, StatefulInteractiveElement as _, Styled as _,
     Subscription, Task, Window, div, prelude::FluentBuilder as _,
 };
+use table_layout::TableLayout;
 use vikunja::{Project, ProjectKind};
 
 use projects_table::{ProjectRow, ProjectsTable};
@@ -43,6 +44,9 @@ pub enum ProjectsEvent {
     OpenSavedFilter { filter_id: i64, title: SharedString },
     /// The projects (and saved filters) loaded, on open or after a refresh.
     Loaded(Vec<Project>),
+    /// The user moved, resized or sorted a column. Save the layout and restore it with
+    /// [`ProjectsView::set_table_layout`].
+    TableLayoutChanged(TableLayout),
 }
 
 /// Register the projects view's key bindings. Call once at startup.
@@ -67,7 +71,10 @@ pub struct ProjectsView {
     summary: SharedString,
     /// Dropping the task discards a superseded load's result.
     load_task: Option<Task<()>>,
+    /// The table layout last reported or restored, by [`ProjectsTable::layout_revision`].
+    layout_revision: u64,
     _table_events: Subscription,
+    _table_layout: Subscription,
 }
 
 impl ProjectsView {
@@ -75,9 +82,20 @@ impl ProjectsView {
     pub fn new(load_projects: LoadProjects, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let table = cx.new(|cx| TableState::new(ProjectsTable::default(), window, cx));
         table.read(cx).focus_handle(cx).focus(window, cx);
-        let table_events = cx.subscribe(&table, |this, _, event: &TableEvent, cx| {
-            if let TableEvent::DoubleClickedRow(row_ix) = event {
-                this.open_row(*row_ix, cx);
+        let table_events = cx.subscribe(&table, |this, _, event: &TableEvent, cx| match event {
+            TableEvent::DoubleClickedRow(row_ix) => this.open_row(*row_ix, cx),
+            TableEvent::ColumnWidthsChanged(widths) => this.table.update(cx, |table, cx| {
+                table.delegate_mut().set_widths(widths);
+                cx.notify();
+            }),
+            _ => {}
+        });
+        // Moves, resizes and sorts all notify the table; report the layout once it changed.
+        let table_layout = cx.observe(&table, |this, table, cx| {
+            let table = table.read(cx).delegate();
+            if table.layout_revision() != this.layout_revision {
+                this.layout_revision = table.layout_revision();
+                cx.emit(ProjectsEvent::TableLayoutChanged(table.layout()));
             }
         });
 
@@ -89,10 +107,23 @@ impl ProjectsView {
             error: None,
             summary: SharedString::default(),
             load_task: None,
+            layout_revision: 0,
             _table_events: table_events,
+            _table_layout: table_layout,
         };
         this.reload(window, cx);
         this
+    }
+
+    /// Arrange the table's columns and sort as the user last left them, from a
+    /// [`ProjectsEvent::TableLayoutChanged`].
+    pub fn set_table_layout(&mut self, layout: &TableLayout, cx: &mut Context<Self>) {
+        self.layout_revision = self.table.update(cx, |table, cx| {
+            table.delegate_mut().set_layout(layout);
+            table.refresh(cx);
+            cx.notify();
+            table.delegate().layout_revision()
+        });
     }
 
     fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -360,6 +391,83 @@ mod tests {
             assert_eq!(refresh.role(), Some(Role::Button));
         })
         .unwrap();
+    }
+
+    #[gpui_kit::test]
+    async fn restores_and_reports_the_table_layout(cx: &mut TestAppContext) {
+        let load: LoadProjects = Arc::new(|| Ok(vec![project(1, "Work"), project(2, "Home")]));
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                cx.new(|cx| ProjectsView::new(load, window, cx))
+            })
+            .unwrap()
+        });
+        let layouts = Rc::new(std::cell::RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let layouts = Rc::clone(&layouts);
+            cx.subscribe(&view, move |_, event: &ProjectsEvent, _| {
+                if let ProjectsEvent::TableLayoutChanged(layout) = event {
+                    layouts.borrow_mut().push(layout.clone());
+                }
+            })
+            .detach();
+        });
+        cx.wait_for(handle, Duration::from_secs(5), |window, _| {
+            window.try_find_by_label("Work").is_some()
+        })
+        .await;
+
+        let saved = TableLayout {
+            columns: vec![table_layout::ColumnLayout {
+                key: "description".into(),
+                width: 300,
+            }],
+            sort: Some(table_layout::Sort {
+                column: "title".into(),
+                direction: table_layout::SortDirection::Ascending,
+            }),
+        };
+        cx.update(|cx| view.update(cx, |view, cx| view.set_table_layout(&saved, cx)));
+        cx.run_until_parked();
+        assert!(
+            layouts.borrow().is_empty(),
+            "restoring isn't a change to save"
+        );
+        cx.update(|cx| {
+            let table = view.read(cx).table.read(cx);
+            assert_eq!(
+                table.headers(cx),
+                ["Description", "Title", "Type", "Identifier"]
+            );
+            assert_eq!(table.col_width(0), Some(px(300.)));
+            let titles: Vec<_> = table
+                .delegate()
+                .rows()
+                .iter()
+                .map(|r| r.title.as_ref())
+                .collect();
+            assert_eq!(titles, ["Home", "Work"], "sorted by title, as saved");
+        });
+
+        // Title is now second; sorting it again after ascending clears the sort.
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.click(gpui_kit::ElementId::from(("icon-sort", 1_usize)), cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let reported = layouts
+            .borrow()
+            .last()
+            .cloned()
+            .expect("a layout was reported");
+        assert_eq!(
+            reported.columns.first().map(|col| col.key.as_str()),
+            Some("description")
+        );
+        assert_eq!(reported.sort, None);
     }
 
     #[gpui_kit::test]
