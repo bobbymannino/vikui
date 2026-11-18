@@ -23,6 +23,8 @@ const FILE: &str = "preferences.json";
 pub struct Preferences {
     /// Look for a newer release when the app opens.
     pub check_for_updates_on_open: bool,
+    /// The colour themes and whether to follow the system's light or dark appearance.
+    pub theme: ThemePreferences,
     /// How the user last arranged each table.
     pub tables: Tables,
 }
@@ -31,9 +33,32 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             check_for_updates_on_open: true,
+            theme: ThemePreferences::default(),
             tables: Tables::default(),
         }
     }
+}
+
+/// Which colour theme to show.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct ThemePreferences {
+    pub appearance: Appearance,
+    /// The theme shown while the appearance is light, by name; `None` for the default.
+    pub light: Option<String>,
+    /// The theme shown while the appearance is dark, by name; `None` for the default.
+    pub dark: Option<String>,
+}
+
+/// Whether the app looks light or dark.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Appearance {
+    Light,
+    Dark,
+    /// Follow the system's appearance as it changes.
+    #[default]
+    Auto,
 }
 
 /// The saved layout of each table: its column order, widths and sort.
@@ -164,6 +189,28 @@ mod tests {
         let loaded = Preferences::load_from(&path);
         assert!(!loaded.check_for_updates_on_open);
         assert_eq!(loaded.tables, Tables::default());
+    }
+
+    #[test]
+    fn saves_and_loads_the_theme() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        assert_eq!(Preferences::default().theme.appearance, Appearance::Auto);
+        let preferences = Preferences {
+            theme: ThemePreferences {
+                appearance: Appearance::Dark,
+                light: Some("Solarized Light".into()),
+                dark: None,
+            },
+            ..Preferences::default()
+        };
+        preferences.save_to(&path).unwrap();
+        assert_eq!(Preferences::load_from(&path), preferences);
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .contains("\"appearance\": \"dark\"")
+        );
     }
 
     #[test]
