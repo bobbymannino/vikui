@@ -55,8 +55,10 @@ fn main() {
         // Remove what the last update left behind (the old executable on Windows).
         cx.background_spawn(async { updater::clean_up() }).detach();
 
-        // Windows restore their table layouts from the preferences, so open them after.
+        // Windows restore their table layouts from the preferences, so open them after,
+        // in the saved theme.
         app_preferences::load(cx, |preferences, cx| {
+            app_theme::apply(&preferences.theme, cx);
             open_initial_window(cx);
             if preferences.check_for_updates_on_open {
                 settings_window::check_on_launch(cx);

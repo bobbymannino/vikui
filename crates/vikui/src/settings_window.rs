@@ -7,7 +7,9 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+use gpui_kit::component::ThemeMode;
 use gpui_kit::{AnyWindowHandle, App, AppContext as _, Entity, Global, WeakEntity};
+use preferences::Appearance;
 use settings_ui::{About, SettingsEvent, SettingsView, ThemeChoices, UpdateStatus};
 use updater::{Release, Updater};
 
@@ -31,6 +33,30 @@ fn about() -> About {
         version: env!("CARGO_PKG_VERSION").into(),
         repository: env!("CARGO_PKG_REPOSITORY").into(),
     }
+}
+
+/// The saved appearance, the themes shown and the themes to pick from.
+fn theme_choices(cx: &App) -> ThemeChoices {
+    let appearance = match crate::app_preferences::get(cx).theme.appearance {
+        Appearance::Light => settings_ui::Appearance::Light,
+        Appearance::Dark => settings_ui::Appearance::Dark,
+        Appearance::Auto => settings_ui::Appearance::Auto,
+    };
+    let (light, dark) = crate::app_theme::current(cx);
+    ThemeChoices {
+        appearance,
+        light,
+        dark,
+        light_themes: crate::app_theme::names(ThemeMode::Light, cx),
+        dark_themes: crate::app_theme::names(ThemeMode::Dark, cx),
+    }
+}
+
+/// Save a change to the theme preferences and show it.
+fn change_theme(cx: &mut App, change: impl FnOnce(&mut preferences::ThemePreferences)) {
+    crate::app_preferences::update(cx, |preferences| change(&mut preferences.theme));
+    let theme = crate::app_preferences::get(cx).theme;
+    crate::app_theme::apply(&theme, cx);
 }
 
 /// Open the settings window, or activate it if it is already open. Opening it checks for
@@ -88,12 +114,11 @@ fn open_view(cx: &mut App) -> Option<(Opened, bool)> {
         return Some((opened, false));
     }
     let title = format!("Settings – {}", crate::APP_NAME);
-    let options = crate::window_options(title, 480., 400., cx);
+    let options = crate::window_options(title, 480., 560., cx);
     let check_on_open = crate::app_preferences::get(cx).check_for_updates_on_open;
-    let (handle, view) =
-        settings_ui::open(options, about(), check_on_open, ThemeChoices::default(), cx)
-            .inspect_err(|err| log::error!("failed to open settings window: {err:#}"))
-            .ok()?;
+    let (handle, view) = settings_ui::open(options, about(), check_on_open, theme_choices(cx), cx)
+        .inspect_err(|err| log::error!("failed to open settings window: {err:#}"))
+        .ok()?;
     let opened = Opened {
         handle,
         view: view.downgrade(),
@@ -123,13 +148,24 @@ impl Updates {
             available: RefCell::default(),
         });
         let updates = Rc::clone(&this);
-        cx.subscribe(view, move |_, event, cx| match *event {
+        cx.subscribe(view, move |_, event, cx| match event {
             SettingsEvent::CheckForUpdates => updates.check(cx),
             SettingsEvent::InstallUpdate => updates.install(cx),
-            SettingsEvent::SetAppearance(_)
-            | SettingsEvent::SetLightTheme(_)
-            | SettingsEvent::SetDarkTheme(_) => {}
-            SettingsEvent::SetCheckForUpdatesOnOpen(on) => {
+            SettingsEvent::SetAppearance(appearance) => {
+                let appearance = match appearance {
+                    settings_ui::Appearance::Light => Appearance::Light,
+                    settings_ui::Appearance::Dark => Appearance::Dark,
+                    settings_ui::Appearance::Auto => Appearance::Auto,
+                };
+                change_theme(cx, |theme| theme.appearance = appearance);
+            }
+            SettingsEvent::SetLightTheme(name) => {
+                change_theme(cx, |theme| theme.light = Some(name.to_string()));
+            }
+            SettingsEvent::SetDarkTheme(name) => {
+                change_theme(cx, |theme| theme.dark = Some(name.to_string()));
+            }
+            &SettingsEvent::SetCheckForUpdatesOnOpen(on) => {
                 crate::app_preferences::update(cx, |preferences| {
                     preferences.check_for_updates_on_open = on;
                 });
