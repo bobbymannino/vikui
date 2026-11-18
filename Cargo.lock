@@ -5860,6 +5860,7 @@ dependencies = [
  "log",
  "serde",
  "serde_json",
+ "table-layout",
  "tempfile",
 ]
 
