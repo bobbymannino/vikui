@@ -53,8 +53,9 @@ fn main() {
         // Remove what the last update left behind (the old executable on Windows).
         cx.background_spawn(async { updater::clean_up() }).detach();
 
-        open_initial_window(cx);
+        // Windows restore their table layouts from the preferences, so open them after.
         app_preferences::load(cx, |preferences, cx| {
+            open_initial_window(cx);
             if preferences.check_for_updates_on_open {
                 settings_window::check_on_launch(cx);
             }
@@ -118,12 +119,22 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
     let search_session = Arc::clone(&session);
     let search_expire = expire.clone();
     let result = overview_ui::open(options, cx, move |window, cx| {
-        let view = cx.new(|cx| ProjectsView::new(load_projects, window, cx));
+        let view = cx.new(|cx| {
+            let mut view = ProjectsView::new(load_projects, window, cx);
+            let layout = app_preferences::get(cx).tables.projects;
+            view.set_table_layout(&layout, cx);
+            view
+        });
         cx.subscribe(&view, move |_, event, cx| {
             let source = match event {
                 ProjectsEvent::SessionExpired => return expire(&session, cx),
                 ProjectsEvent::Loaded(projects) => return projects_menu::set(projects, cx),
-                ProjectsEvent::TableLayoutChanged(_) => return,
+                ProjectsEvent::TableLayoutChanged(layout) => {
+                    let layout = layout.clone();
+                    return app_preferences::update(cx, |preferences| {
+                        preferences.tables.projects = layout;
+                    });
+                }
                 ProjectsEvent::OpenProject {
                     id,
                     title,

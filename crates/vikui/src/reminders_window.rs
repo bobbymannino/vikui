@@ -166,8 +166,8 @@ pub fn open_search(
     .detach();
 }
 
-/// Load `source` into a newly opened window, and wire up its details panel, refresh and
-/// new reminder button.
+/// Load `source` into a newly opened window, and wire up its details panel, refresh,
+/// new reminder button and saved table layout.
 fn fill(
     handle: AnyWindowHandle,
     view: &Entity<RemindersView>,
@@ -194,12 +194,20 @@ fn fill(
         tasks,
         on_session_expired,
     });
+    // Every reminders and search window shares the layout the user last left one in.
+    let layout = crate::app_preferences::get(cx).tables.reminders;
+    view.update(cx, |view, cx| view.set_table_layout(&layout, cx));
     load.run(cx);
     cx.subscribe(view, {
         let load = Rc::clone(&load);
         move |_, event, cx| match event {
             RemindersEvent::Refresh => load.run(cx),
             RemindersEvent::NewReminder => crate::new_reminder_window::open(cx),
+            RemindersEvent::TableLayoutChanged(layout) => {
+                crate::app_preferences::update(cx, |preferences| {
+                    preferences.tables.reminders = layout.clone();
+                });
+            }
             _ => {}
         }
     })
