@@ -7423,6 +7423,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "table-layout"
+version = "0.6.1"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "taffy"
 version = "0.15.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
