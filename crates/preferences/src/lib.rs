@@ -6,6 +6,7 @@
 //! file can't stop the app from starting. Reading and writing block; run them on a
 //! background task. No UI.
 
+use std::collections::BTreeMap;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -27,6 +28,8 @@ pub struct Preferences {
     pub theme: ThemePreferences,
     /// How the user last arranged each table.
     pub tables: Tables,
+    /// Where each kind of window was last, by a stable name such as `"main"`.
+    pub windows: BTreeMap<String, WindowPlacement>,
 }
 
 impl Default for Preferences {
@@ -35,6 +38,7 @@ impl Default for Preferences {
             check_for_updates_on_open: true,
             theme: ThemePreferences::default(),
             tables: Tables::default(),
+            windows: BTreeMap::new(),
         }
     }
 }
@@ -59,6 +63,19 @@ pub enum Appearance {
     /// Follow the system's appearance as it changes.
     #[default]
     Auto,
+}
+
+/// A window's frame, in logical pixels in the desktop's coordinates (which can be
+/// negative on a display left of or above the main one).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct WindowPlacement {
+    pub x: i32,
+    pub y: i32,
+    pub width: u32,
+    pub height: u32,
+    /// Maximized; the frame is where it goes when restored.
+    pub maximized: bool,
 }
 
 /// The saved layout of each table: its column order, widths and sort.
@@ -211,6 +228,28 @@ mod tests {
                 .unwrap()
                 .contains("\"appearance\": \"dark\"")
         );
+    }
+
+    #[test]
+    fn saves_and_loads_window_placements() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        let preferences = Preferences {
+            windows: BTreeMap::from([(
+                "main".to_owned(),
+                WindowPlacement {
+                    x: -1200,
+                    y: 40,
+                    width: 960,
+                    height: 640,
+                    maximized: true,
+                },
+            )]),
+            ..Preferences::default()
+        };
+        preferences.save_to(&path).unwrap();
+        assert_eq!(Preferences::load_from(&path), preferences);
+        assert!(Preferences::default().windows.is_empty());
     }
 
     #[test]
