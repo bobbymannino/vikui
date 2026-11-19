@@ -46,11 +46,18 @@ pub fn open(task_id: i64, cx: &mut App) {
     let Some(signed_in) = app_session::get(cx) else {
         return;
     };
-    let options = crate::window_options("Edit Task", 520., 640., cx);
+    let options = crate::app_windows::options(
+        crate::app_windows::WindowKind::EditTask,
+        "Edit Task",
+        520.,
+        640.,
+        cx,
+    );
     let (handle, view) = match new_reminder_ui::open_edit(options, cx) {
         Ok(opened) => opened,
         Err(err) => return log::error!("failed to open edit task window: {err:#}"),
     };
+    crate::app_windows::track(crate::app_windows::WindowKind::EditTask, handle, cx);
     cx.default_global::<EditWindows>()
         .0
         .insert(task_id, (handle, view.downgrade()));

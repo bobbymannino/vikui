@@ -91,7 +91,13 @@ pub fn open(
     }
 
     let title = source.title();
-    let options = crate::window_options(title.clone(), 1200., 560., cx);
+    let options = crate::app_windows::options(
+        crate::app_windows::WindowKind::Reminders,
+        title.clone(),
+        1200.,
+        560.,
+        cx,
+    );
     let (handle, view) = match reminders_ui::open(options, title, None, cx) {
         Ok(opened) => opened,
         Err(err) => {
@@ -99,6 +105,7 @@ pub fn open(
             return;
         }
     };
+    crate::app_windows::track(crate::app_windows::WindowKind::Reminders, handle, cx);
     let opened = fill(
         handle,
         &view,
@@ -140,7 +147,13 @@ pub fn open_search(
         return;
     }
 
-    let options = crate::window_options(source.title(), 1200., 560., cx);
+    let options = crate::app_windows::options(
+        crate::app_windows::WindowKind::Search,
+        source.title(),
+        1200.,
+        560.,
+        cx,
+    );
     let (handle, view) = match reminders_ui::open_search(options, text, cx) {
         Ok(opened) => opened,
         Err(err) => {
@@ -148,6 +161,7 @@ pub fn open_search(
             return;
         }
     };
+    crate::app_windows::track(crate::app_windows::WindowKind::Search, handle, cx);
     let opened = fill(
         handle,
         &view,

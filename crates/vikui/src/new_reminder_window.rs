@@ -33,11 +33,18 @@ pub fn open(cx: &mut App) {
         return;
     };
     let zone = TimeZone::system();
-    let options = crate::window_options("New Reminder", 520., 640., cx);
+    let options = crate::app_windows::options(
+        crate::app_windows::WindowKind::NewReminder,
+        "New Reminder",
+        520.,
+        640.,
+        cx,
+    );
     let (handle, view) = match new_reminder_ui::open(options, new_reminder::now_in(&zone), cx) {
         Ok(opened) => opened,
         Err(err) => return log::error!("failed to open new reminder window: {err:#}"),
     };
+    crate::app_windows::track(crate::app_windows::WindowKind::NewReminder, handle, cx);
     cx.set_global(NewReminderWindow(Some((handle, view.downgrade()))));
     load_options(handle, &view, signed_in.clone(), cx);
     cx.subscribe(&view, move |view, event, cx| match event {

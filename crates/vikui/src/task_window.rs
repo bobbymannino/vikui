@@ -51,7 +51,13 @@ pub fn open(
         return;
     }
 
-    let options = crate::window_options(reminder.task_title.clone(), 440., 600., cx);
+    let options = crate::app_windows::options(
+        crate::app_windows::WindowKind::Task,
+        reminder.task_title.clone(),
+        440.,
+        600.,
+        cx,
+    );
     let opened = gpui_kit::open_window(options, cx, |_, cx| {
         cx.new(|cx| {
             let mut view = ReminderDetailsView::new_window();
@@ -63,6 +69,7 @@ pub fn open(
         Ok(opened) => opened,
         Err(err) => return log::error!("failed to open task window: {err:#}"),
     };
+    crate::app_windows::track(crate::app_windows::WindowKind::Task, handle, cx);
     cx.subscribe(&view, move |_, event, cx| match *event {
         ReminderDetailsEvent::SetDone { task_id, done } => set_done(task_id, done, cx),
         ReminderDetailsEvent::OpenInBrowser { task_id } => open_in_browser(&server, task_id, cx),

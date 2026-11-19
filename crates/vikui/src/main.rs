@@ -6,6 +6,7 @@ mod app_menu;
 mod app_preferences;
 mod app_session;
 mod app_theme;
+mod app_windows;
 mod edit_task_window;
 mod new_reminder_window;
 mod projects_menu;
@@ -17,11 +18,9 @@ use std::cell::Cell;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use app_windows::WindowKind;
 use gpui_kit::component::Theme;
-use gpui_kit::{
-    AnyWindowHandle, App, AppContext as _, Bounds, SharedString, WindowBounds, WindowOptions, px,
-    size,
-};
+use gpui_kit::{AnyWindowHandle, App, AppContext as _};
 use login::{Credentials, Session};
 use login_ui::Prompt;
 use overview_ui::OverviewEvent;
@@ -91,14 +90,16 @@ fn open_initial_window(cx: &mut App) {
 }
 
 fn open_login(prompt: Prompt, cx: &mut App) -> Option<AnyWindowHandle> {
-    let options = window_options("Sign in – Vikui", 480., 560., cx);
-    login_ui::open(options, prompt, cx, open_overview)
+    let options = app_windows::options(WindowKind::Login, "Sign in – Vikui", 480., 560., cx);
+    let handle = login_ui::open(options, prompt, cx, open_overview)
         .inspect_err(|err| log::error!("failed to open login window: {err:#}"))
-        .ok()
+        .ok()?;
+    app_windows::track(WindowKind::Login, handle, cx);
+    Some(handle)
 }
 
 fn open_overview(credentials: Credentials, cx: &mut App) {
-    let options = window_options("Vikui", 960., 640., cx);
+    let options = app_windows::options(WindowKind::Main, APP_NAME, 960., 640., cx);
     let session = Arc::new(Session::new(credentials));
     let load_projects: LoadProjects = {
         let session = Arc::clone(&session);
@@ -166,7 +167,8 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
         view.into()
     });
     match result {
-        Ok((_, overview)) => {
+        Ok((handle, overview)) => {
+            app_windows::track(WindowKind::Main, handle, cx);
             cx.subscribe(&overview, move |_, event, cx| match event {
                 OverviewEvent::Search(text) => {
                     let expire = search_expire.clone();
@@ -225,28 +227,4 @@ fn quit_when_last_window_closes(cx: &mut App) {
         }
     })
     .detach();
-}
-
-/// Centred window options with a sensible minimum size.
-fn window_options(
-    title: impl Into<SharedString>,
-    width: f32,
-    height: f32,
-    cx: &App,
-) -> WindowOptions {
-    WindowOptions {
-        window_bounds: Some(WindowBounds::Windowed(Bounds::centered(
-            None,
-            size(px(width), px(height)),
-            cx,
-        ))),
-        window_min_size: Some(size(px(width * 0.75), px(height * 0.75))),
-        titlebar: Some(gpui_kit::TitlebarOptions {
-            title: Some(title.into()),
-            ..Default::default()
-        }),
-        // Matches the Linux desktop entry, so the dock shows the app's name and icon.
-        app_id: Some(APP_ID.to_owned()),
-        ..Default::default()
-    }
 }
