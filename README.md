@@ -95,7 +95,9 @@ Preferences are saved in `preferences.json` in `~/Library/Application Support/vi
 macOS, `~/.config/vikui` on Linux and `%APPDATA%\vikui` on Windows. They include how you
 last arranged the projects and reminders tables: drag a header to move its column, drag
 a header's edge to resize it and click a sort icon to sort, and windows opened later
-come back the same way.
+come back the same way. Each kind of window (the main window, reminders, search, settings
+and so on) also reopens at the size and position you last left one in, moved back onto a
+connected display if its own was unplugged.
 
 Vikui must be able to write to the folder it is installed in. On macOS, move
 `Vikui.app` to **Applications** first; copies built from source update with `cargo install`.
