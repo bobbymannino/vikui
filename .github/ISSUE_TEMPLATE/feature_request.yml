@@ -1,0 +1,13 @@
+name: Feature request
+description: Suggest something Vikui could do.
+type: Feature
+assignees:
+  - bobbymannino
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What would you like Vikui to do?
+      description: The feature, and the problem it would solve for you.
+    validations:
+      required: true
