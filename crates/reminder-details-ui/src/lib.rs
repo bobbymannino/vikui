@@ -7,6 +7,7 @@
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants as _};
+use gpui_kit::component::text::{MarkdownExtensions, TextView};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _, h_flex, v_flex,
 };
@@ -59,7 +60,10 @@ struct Content {
     identifier: SharedString,
     reminder: Vec<Field>,
     task: Vec<Field>,
+    /// Markdown, rendered.
     description: SharedString,
+    /// The description as plain text: its accessible name.
+    description_text: SharedString,
     /// One line per reminder on the task: "Tue 1 Dec 2026, 08:00 · 1 hour before due date".
     reminders: Vec<SharedString>,
 }
@@ -105,6 +109,7 @@ impl Content {
             reminder: reminder_fields,
             task,
             description: details.description.clone().into(),
+            description_text: details.description_text.clone().into(),
             reminders: details
                 .reminders
                 .iter()
@@ -398,9 +403,15 @@ impl Render for ReminderDetailsView {
                         cx,
                         [div()
                             .id("description")
-                            .aria_label(content.description.clone())
+                            .aria_label(content.description_text.clone())
                             .text_sm()
-                            .child(content.description.clone())
+                            .child(
+                                TextView::markdown("description-text", content.description.clone())
+                                    // Descriptions come from the server; show HTML in them
+                                    // as text, never as markup.
+                                    .markdown_extensions(MarkdownExtensions::default().raw_html(false))
+                                    .selectable(true),
+                            )
                             .test_support()],
                     ))
                 })
@@ -468,7 +479,7 @@ mod tests {
             id: 7,
             title: "Pay rent".into(),
             identifier: "HOME-7".into(),
-            description: "<p>Transfer &amp; confirm</p>".into(),
+            description: "<p><strong>Transfer</strong> &amp; confirm</p>".into(),
             priority: 4,
             due_date: Some(ts("2026-12-01T09:00:00Z")),
             reminders: vec![TaskReminder {
@@ -508,7 +519,8 @@ mod tests {
                 Field::new("Due", "Tue 1 Dec 2026, 09:00"),
             ]
         );
-        assert_eq!(content.description, "Transfer & confirm");
+        assert_eq!(content.description, "**Transfer** & confirm");
+        assert_eq!(content.description_text, "Transfer & confirm");
         assert_eq!(
             content.reminders,
             ["Tue 1 Dec 2026, 08:00 · 1 hour before due date"]

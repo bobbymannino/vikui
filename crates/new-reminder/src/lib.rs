@@ -2,8 +2,11 @@
 //! task it creates or the changes it saves.
 //!
 //! A reminder is a Vikunja task with a reminder at its due date, so it fires when due.
+//! Its description is edited as markdown and saved as the HTML Vikunja stores (see the
+//! `description` crate).
 //! No UI; the network calls block, so run them on a background task.
 
+use description::LineBreaks;
 use jiff::Timestamp;
 use jiff::civil::DateTime;
 use jiff::tz::TimeZone;
@@ -123,7 +126,7 @@ impl Draft {
     pub fn from_task(task: &Task, zone: &TimeZone) -> Self {
         Self {
             title: task.title.clone(),
-            body: to_text(&task.description),
+            body: description::to_markdown(&task.description, LineBreaks::Newline),
             due: task.due_date.map(|due| {
                 let due = due.to_zoned_datetime(zone.clone()).datetime();
                 due.with()
@@ -169,7 +172,7 @@ impl Draft {
             .collect();
         let task = NewTask {
             title: title.to_owned(),
-            description: to_html(&self.body),
+            description: description::to_html(&self.body),
             due_date,
             priority: self.priority.map_or(0, Priority::level),
             repeat: self.repeat.repeat(),
@@ -205,7 +208,8 @@ impl Edit {
         let title = edited.title.trim();
         Ok(TaskUpdate {
             title: (title != old.title.trim()).then(|| title.to_owned()),
-            description: (edited.body.trim() != old.body.trim()).then(|| to_html(&edited.body)),
+            description: (edited.body.trim() != old.body.trim())
+                .then(|| description::to_html(&edited.body)),
             due_date: if edited.due == old.due {
                 Change::Keep
             } else {
@@ -262,84 +266,6 @@ impl Invalid {
             Self::BadDueDate => "That due date doesn't exist in your time zone.",
         }
     }
-}
-
-/// `text` as the HTML Vikunja stores: escaped, one `<p>` per paragraph, single line
-/// breaks kept. Empty for blank text.
-#[must_use]
-pub fn to_html(text: &str) -> String {
-    let escape = |line: &str| {
-        line.replace('&', "&amp;")
-            .replace('<', "&lt;")
-            .replace('>', "&gt;")
-            .replace('"', "&quot;")
-    };
-    let normalized = text.replace("\r\n", "\n");
-    let mut html = String::new();
-    for paragraph in normalized.split("\n\n").map(str::trim) {
-        if paragraph.is_empty() {
-            continue;
-        }
-        let lines: Vec<String> = paragraph.lines().map(|line| escape(line.trim())).collect();
-        html.push_str("<p>");
-        html.push_str(&lines.join("<br>"));
-        html.push_str("</p>");
-    }
-    html
-}
-
-/// Vikunja's HTML description as plain text for editing: paragraphs become blank
-/// lines, line breaks new lines, and other tags are dropped.
-#[must_use]
-pub fn to_text(html: &str) -> String {
-    let mut text = String::with_capacity(html.len());
-    let mut rest = html;
-    while let Some(start) = rest.find('<') {
-        text.push_str(&rest[..start]);
-        let Some(end) = rest[start..].find('>') else {
-            rest = &rest[start..];
-            break;
-        };
-        let tag = rest[start + 1..start + end].trim().to_ascii_lowercase();
-        let closing = tag.starts_with('/');
-        let name = tag
-            .trim_start_matches('/')
-            .split(|c: char| c.is_whitespace() || c == '/')
-            .next()
-            .unwrap_or("");
-        match name {
-            "br" => text.push('\n'),
-            "p" | "div" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6" | "ul" | "ol" | "blockquote"
-            | "pre"
-                if closing =>
-            {
-                text.push_str("\n\n");
-            }
-            "li" if !closing => text.push_str("\n- "),
-            _ => {}
-        }
-        rest = &rest[start + end + 1..];
-    }
-    text.push_str(rest);
-    let decoded = text
-        .replace("&nbsp;", " ")
-        .replace("&lt;", "<")
-        .replace("&gt;", ">")
-        .replace("&quot;", "\"")
-        .replace("&#39;", "'")
-        .replace("&amp;", "&");
-    // Trim each line and collapse runs of blank lines into one.
-    let mut lines: Vec<&str> = Vec::new();
-    for line in decoded.lines().map(str::trim) {
-        if line.is_empty() && lines.last().is_none_or(|last| last.is_empty()) {
-            continue;
-        }
-        lines.push(line);
-    }
-    while lines.last().is_some_and(|line| line.is_empty()) {
-        lines.pop();
-    }
-    lines.join("\n")
 }
 
 /// A project a reminder can be created in.
@@ -635,7 +561,7 @@ mod tests {
     fn fills_the_form_from_a_task() {
         let draft = Draft::from_task(&saved_task(), &TimeZone::UTC);
         assert_eq!(draft.title, "Pay rent");
-        assert_eq!(draft.body, "Flat 2\nRef A&B\n\nCall first");
+        assert_eq!(draft.body, "**Flat** 2\nRef A&B\n\nCall first");
         assert_eq!(draft.due, Some(at("2026-12-01T09:00")));
         assert_eq!(draft.priority, Some(Priority::Medium));
         let three_days = Repeat::Every {
@@ -704,13 +630,19 @@ mod tests {
     }
 
     #[test]
-    fn turns_html_into_editable_text() {
-        assert_eq!(to_text(""), "");
-        assert_eq!(to_text("plain"), "plain");
+    fn edits_the_description_as_markdown() {
+        let task = saved_task();
+        let edit = Edit::new(&task, &TimeZone::UTC);
+        let formatted = Draft {
+            body: "**Flat** 2\nRef A&B\n\n- [ ] Call first".into(),
+            ..edit.original.clone()
+        };
+        let update = edit.update(&formatted, &TimeZone::UTC).unwrap();
         assert_eq!(
-            to_text("<ul><li>one</li><li>two</li></ul><p>after</p>"),
-            "- one\n- two\n\nafter"
+            update.description.as_deref(),
+            Some(
+                "<p><strong>Flat</strong> 2<br>Ref A&amp;B</p><ul data-type=\"taskList\"><li data-checked=\"false\" data-type=\"taskItem\"><label><input type=\"checkbox\"><span></span></label><div><p>Call first</p></div></li></ul>"
+            )
         );
-        assert_eq!(to_text(&to_html("a\nb\n\nc")), "a\nb\n\nc");
     }
 }

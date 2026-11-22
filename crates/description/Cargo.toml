@@ -1,0 +1,13 @@
+[package]
+name = "description"
+description = "Converts Vikunja's HTML task descriptions to markdown and back, no UI"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+markdown.workspace = true
+
+[lints]
+workspace = true

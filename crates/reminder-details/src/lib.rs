@@ -15,8 +15,11 @@ pub struct ReminderDetails {
     pub project: Option<String>,
     /// How the task, and so its reminders, repeats.
     pub repeat: Option<Repeat>,
-    /// Plain text; empty when the task has no description.
+    /// Markdown to render, line breaks kept as hard breaks; empty when the task has no
+    /// description.
     pub description: String,
+    /// The description as one line of plain text, e.g. for its accessible name.
+    pub description_text: String,
     pub priority: Option<Priority>,
     pub due: Option<Timestamp>,
     pub start: Option<Timestamp>,
@@ -38,7 +41,8 @@ impl ReminderDetails {
             reminder: reminder.clone(),
             project: project.map(str::to_owned),
             repeat: task.repeat(),
-            description: task.plain_description(),
+            description: description::to_markdown(&task.description, description::LineBreaks::Hard),
+            description_text: task.plain_description(),
             priority: Priority::from_level(task.priority),
             due: task.due_date,
             start: task.start_date,
@@ -72,7 +76,7 @@ mod tests {
         let task = Task {
             id: 7,
             title: "Pay rent".into(),
-            description: "<p>Transfer &amp; confirm</p>".into(),
+            description: "<p><b>Transfer</b> &amp; confirm<br>first</p>".into(),
             priority: 3,
             due_date: Some(ts("2026-12-01T09:00:00Z")),
             end_date: Some(ts("2026-12-02T09:00:00Z")),
@@ -94,7 +98,8 @@ mod tests {
         let all = reminders::from_tasks(std::slice::from_ref(&task));
         let details = ReminderDetails::new(&all[1], &task, Some("Home"));
         assert_eq!(details.reminder.at, Some(ts("2026-12-01T08:00:00Z")));
-        assert_eq!(details.description, "Transfer & confirm");
+        assert_eq!(details.description, "**Transfer** & confirm\\\nfirst");
+        assert_eq!(details.description_text, "Transfer & confirm first");
         assert_eq!(details.project.as_deref(), Some("Home"));
         assert_eq!(details.repeat, None);
         assert_eq!(details.priority, Some(Priority::High));

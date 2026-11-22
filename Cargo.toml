@@ -12,6 +12,7 @@ repository = "https://github.com/bobbymannino/vikui"
 
 [workspace.dependencies]
 # Internal crates
+description = { path = "crates/description" }
 login = { path = "crates/login" }
 login-ui = { path = "crates/login-ui" }
 new-reminder = { path = "crates/new-reminder" }
@@ -35,6 +36,7 @@ gpui-kit = "0.10.0"
 jiff = "1"
 keyring = "4.2.0"
 log = "0.4"
+markdown = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 tempfile = "3.27.0"
