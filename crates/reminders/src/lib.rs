@@ -525,6 +525,8 @@ pub enum Source {
         title: String,
     },
     Filter(String),
+    /// Tasks in every project matching the text and `*label` terms (see
+    /// [`SearchTerms`]); a blank search lists nothing.
     Search(String),
 }
 
@@ -536,6 +538,7 @@ impl Source {
                 format!("Reminders – {title}")
             }
             Self::Filter(filter) => format!("Reminders – filter “{filter}”"),
+            Self::Search(_) if self.is_blank_search() => "Search all tasks".to_owned(),
             Self::Search(text) => format!("Search – “{text}”"),
         }
     }
@@ -545,6 +548,9 @@ impl Source {
     /// A search with `*label` terms (see [`SearchTerms`]) lists only tasks with a label
     /// starting with each, and none if no label does.
     pub fn tasks(&self, client: &Client, token: &Token) -> Result<Vec<Task>, Error> {
+        if self.is_blank_search() {
+            return Ok(Vec::new());
+        }
         let query = match self.direct_query() {
             Some(query) => query,
             None => match self {
@@ -564,6 +570,17 @@ impl Source {
             },
         };
         client.tasks(token, &query)
+    }
+
+    /// A search with nothing to search for, which lists nothing (rather than every task).
+    fn is_blank_search(&self) -> bool {
+        match self {
+            Self::Search(text) => {
+                let terms = SearchTerms::parse(text);
+                terms.text.trim().is_empty() && terms.labels.is_empty()
+            }
+            _ => false,
+        }
     }
 
     /// The query, when it is known without asking the server.
@@ -1008,6 +1025,10 @@ mod tests {
                 .and_then(|query| query.search),
             Some("rent".to_owned())
         );
+        let blank = Source::Search("  * ".into());
+        assert!(blank.is_blank_search());
+        assert_eq!(blank.title(), "Search all tasks");
+        assert!(!Source::Search("*bills".into()).is_blank_search());
         assert_eq!(
             Source::Search("rent *bills".into()).direct_query(),
             None,
