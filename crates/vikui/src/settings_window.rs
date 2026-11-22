@@ -2,7 +2,8 @@
 //! update checks and installs it asks for.
 //!
 //! With "Check for updates on open" on, the app checks when it starts and opens this
-//! window only if an update is available; opening the window checks too.
+//! window only if an update is available; opening the window checks too. Checking from
+//! the menu, or finding an update at launch, shows the Updates tab.
 
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -10,7 +11,7 @@ use std::rc::Rc;
 use gpui_kit::component::ThemeMode;
 use gpui_kit::{AnyWindowHandle, App, AppContext as _, Entity, Global, WeakEntity};
 use preferences::Appearance;
-use settings_ui::{About, SettingsEvent, SettingsView, ThemeChoices, UpdateStatus};
+use settings_ui::{About, SettingsEvent, SettingsTab, SettingsView, ThemeChoices, UpdateStatus};
 use updater::{Release, Updater};
 
 /// The open settings window, so a second request focuses it instead of opening another.
@@ -25,6 +26,15 @@ struct Opened {
 }
 
 impl Global for SettingsWindow {}
+
+impl Opened {
+    /// Bring the Updates tab forward, where the check's result shows.
+    fn show_updates(&self, cx: &mut App) {
+        if let Some(view) = self.view.upgrade() {
+            view.update(cx, |view, cx| view.set_tab(SettingsTab::Updates, cx));
+        }
+    }
+}
 
 /// What the settings window says about this build.
 fn about() -> About {
@@ -70,9 +80,10 @@ pub fn open(cx: &mut App) {
     }
 }
 
-/// Open the settings window and check for updates.
+/// Open the settings window on its Updates tab and check for updates.
 pub fn check_for_updates(cx: &mut App) {
     if let Some((opened, _)) = open_view(cx) {
+        opened.show_updates(cx);
         opened.updates.check(cx);
     }
 }
@@ -90,6 +101,7 @@ pub fn check_on_launch(cx: &mut App) {
             log::info!("Vikui {} is available", release.version);
             cx.update(|cx| {
                 if let Some((opened, _)) = open_view(cx) {
+                    opened.show_updates(cx);
                     opened.updates.found(release, cx);
                 }
             });
