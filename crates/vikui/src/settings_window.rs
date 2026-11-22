@@ -42,6 +42,8 @@ fn about() -> About {
         name: crate::APP_NAME.into(),
         version: env!("CARGO_PKG_VERSION").into(),
         repository: env!("CARGO_PKG_REPOSITORY").into(),
+        bug_report: crate::app_issues::bug_report().into(),
+        feature_request: crate::app_issues::feature_request().into(),
     }
 }
 

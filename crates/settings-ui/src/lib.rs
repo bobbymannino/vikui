@@ -2,7 +2,8 @@
 //!
 //! One tab per [`SettingsTab`]: Appearance lets the user pick the appearance and colour
 //! themes, Reminders what double-clicking a reminder does, Updates lets them update the
-//! app, and About shows what the app is (its name, version and a link to its source). The
+//! app, and About shows what the app is (its name, version and a link to its source) and
+//! links to report a bug or request a feature. The
 //! app supplies [`About`], the [`ThemeChoices`], the [`DoubleClickAction`] and the
 //! [`UpdateStatus`], and applies and saves changes, checks and installs when the view asks
 //! through [`SettingsEvent`]; this crate never fetches or saves. The app can bring a tab
@@ -35,6 +36,10 @@ pub struct About {
     pub version: SharedString,
     /// Where the app's source lives.
     pub repository: SharedString,
+    /// A new bug report, with what the report needs about this build filled in.
+    pub bug_report: SharedString,
+    /// A new feature request.
+    pub feature_request: SharedString,
 }
 
 /// Whether the app looks light or dark.
@@ -475,6 +480,8 @@ impl SettingsView {
     fn render_about(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let repository = self.about.repository.clone();
+        let bug_report = self.about.bug_report.clone();
+        let feature_request = self.about.feature_request.clone();
         v_flex()
             .id("settings-about")
             .gap_2()
@@ -504,6 +511,27 @@ impl SettingsView {
                         .accessibility_label("Open the source repository")
                         .on_click(move |_, _, cx| cx.open_url(&repository)),
                 ),
+            )
+            .child(
+                h_flex()
+                    .gap_4()
+                    .pt_2()
+                    .child(
+                        Button::new("report-bug")
+                            .outline()
+                            .small()
+                            .label("Report a Bug…")
+                            .accessibility_label("Report a bug")
+                            .on_click(move |_, _, cx| cx.open_url(&bug_report)),
+                    )
+                    .child(
+                        Button::new("request-feature")
+                            .outline()
+                            .small()
+                            .label("Request a Feature…")
+                            .accessibility_label("Request a feature")
+                            .on_click(move |_, _, cx| cx.open_url(&feature_request)),
+                    ),
             )
     }
 }
@@ -574,6 +602,16 @@ mod tests {
 
     use super::*;
 
+    fn about() -> About {
+        About {
+            name: "Vikui".into(),
+            version: "1.2.3".into(),
+            repository: "https://example.com/vikui".into(),
+            bug_report: "https://example.com/vikui/bug".into(),
+            feature_request: "https://example.com/vikui/feature".into(),
+        }
+    }
+
     /// Click `tab` in the settings window's tab bar.
     fn click_tab(window: &mut Window, tab: SettingsTab, cx: &mut App) {
         window.render_frame(cx);
@@ -583,11 +621,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn shows_the_app_and_opens_the_repository(cx: &mut TestAppContext) {
-        let about = About {
-            name: "Vikui".into(),
-            version: "1.2.3".into(),
-            repository: "https://example.com/vikui".into(),
-        };
+        let about = about();
         let handle = cx.update(|cx| {
             gpui_kit::init(cx);
             open(
@@ -614,15 +648,33 @@ mod tests {
             cx.opened_url().as_deref(),
             Some("https://example.com/vikui")
         );
+
+        for (id, label, url) in [
+            (
+                "report-bug",
+                "Report a bug",
+                "https://example.com/vikui/bug",
+            ),
+            (
+                "request-feature",
+                "Request a feature",
+                "https://example.com/vikui/feature",
+            ),
+        ] {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.find_by_label(label);
+                window.click(id, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+            assert_eq!(cx.opened_url().as_deref(), Some(url));
+        }
     }
 
     #[gpui_kit::test]
     fn checks_for_and_installs_updates(cx: &mut TestAppContext) {
-        let about = About {
-            name: "Vikui".into(),
-            version: "1.2.3".into(),
-            repository: "https://example.com/vikui".into(),
-        };
+        let about = about();
         let (handle, view) = cx.update(|cx| {
             gpui_kit::init(cx);
             open(
@@ -708,11 +760,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn picks_the_appearance_and_themes(cx: &mut TestAppContext) {
-        let about = About {
-            name: "Vikui".into(),
-            version: "1.2.3".into(),
-            repository: "https://example.com/vikui".into(),
-        };
+        let about = about();
         let theme = ThemeChoices {
             appearance: Appearance::Auto,
             light: "Solarized Light".into(),
@@ -778,11 +826,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn toggles_checking_for_updates_on_open(cx: &mut TestAppContext) {
-        let about = About {
-            name: "Vikui".into(),
-            version: "1.2.3".into(),
-            repository: "https://example.com/vikui".into(),
-        };
+        let about = about();
         let (handle, view) = cx.update(|cx| {
             gpui_kit::init(cx);
             open(
@@ -834,11 +878,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn switches_tabs_by_click_or_from_the_app(cx: &mut TestAppContext) {
-        let about = About {
-            name: "Vikui".into(),
-            version: "1.2.3".into(),
-            repository: "https://example.com/vikui".into(),
-        };
+        let about = about();
         let (handle, view) = cx.update(|cx| {
             gpui_kit::init(cx);
             open(
@@ -907,11 +947,7 @@ mod tests {
 
     #[gpui_kit::test]
     fn picks_what_double_clicking_a_reminder_does(cx: &mut TestAppContext) {
-        let about = About {
-            name: "Vikui".into(),
-            version: "1.2.3".into(),
-            repository: "https://example.com/vikui".into(),
-        };
+        let about = about();
         let (handle, view) = cx.update(|cx| {
             gpui_kit::init(cx);
             open(
