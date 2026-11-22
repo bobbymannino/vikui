@@ -4744,6 +4744,7 @@ dependencies = [
 name = "new-reminder"
 version = "0.7.0"
 dependencies = [
+ "description",
  "jiff 1.0.0",
  "reminders",
  "vikunja",
