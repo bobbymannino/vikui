@@ -2,6 +2,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app_actions;
+mod app_issues;
 mod app_menu;
 mod app_preferences;
 mod app_session;
