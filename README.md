@@ -92,6 +92,9 @@ the one shown while dark from the themes GPUI Kit publishes (Solarized, Catppucc
 Gruvbox, Tokyo Night and more), bundled from its repository under the Apache 2.0 licence
 (`crates/vikui/themes`).
 
+Pick what double-clicking a reminder does on the **Reminders** tab of **Settings**: open
+its details in a new window (the default), edit the task, or mark it done or not done.
+
 Preferences are saved in `preferences.json` in `~/Library/Application Support/vikui` on
 macOS, `~/.config/vikui` on Linux and `%APPDATA%\vikui` on Windows. They include how you
 last arranged the projects and reminders tables: drag a header to move its column, drag
