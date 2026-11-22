@@ -1,9 +1,11 @@
 //! Vikui's settings window.
 //!
-//! Shows what the app is (its name, version and a link to its source), lets the user pick
-//! its appearance and colour themes, and lets them update it. The app supplies [`About`],
-//! the [`ThemeChoices`] and the [`UpdateStatus`], and applies themes, checks and installs
-//! when the view asks through [`SettingsEvent`]; this crate never fetches or saves.
+//! One tab per [`SettingsTab`]: Appearance lets the user pick the appearance and colour
+//! themes, Updates lets them update the app, and About shows what the app is (its name,
+//! version and a link to its source). The app supplies [`About`], the [`ThemeChoices`]
+//! and the [`UpdateStatus`], and applies themes, checks and installs when the view asks
+//! through [`SettingsEvent`]; this crate never fetches or saves. The app can bring a tab
+//! forward with [`SettingsView::set_tab`], e.g. Updates when one is available.
 
 use gpui_kit::base::Selectable as _;
 use gpui_kit::base::TestSupportExt as _;
@@ -11,6 +13,7 @@ use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_kit::component::form::{field, v_form};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::switch::Switch;
+use gpui_kit::component::tab::{Tab, TabBar};
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IndexPath, Sizable as _, h_flex, v_flex,
 };
@@ -107,6 +110,41 @@ impl UpdateStatus {
     }
 }
 
+/// A tab of the settings window.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SettingsTab {
+    #[default]
+    Appearance,
+    Updates,
+    About,
+}
+
+impl SettingsTab {
+    /// In the order the tab bar shows them.
+    pub const ALL: [Self; 3] = [Self::Appearance, Self::Updates, Self::About];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Appearance => "Appearance",
+            Self::Updates => "Updates",
+            Self::About => "About",
+        }
+    }
+
+    /// The accessible name of the tab's panel.
+    fn panel_label(self) -> &'static str {
+        match self {
+            Self::Appearance => "Appearance settings",
+            Self::Updates => "Update settings",
+            Self::About => "App information",
+        }
+    }
+
+    fn index(self) -> usize {
+        Self::ALL.iter().position(|tab| *tab == self).unwrap_or(0)
+    }
+}
+
 /// What the user asked for, for the app to act on.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SettingsEvent {
@@ -126,6 +164,7 @@ pub enum SettingsEvent {
 
 /// The settings view.
 pub struct SettingsView {
+    tab: SettingsTab,
     about: About,
     version_label: SharedString,
     update: UpdateStatus,
@@ -181,6 +220,7 @@ impl SettingsView {
             ),
         ];
         Self {
+            tab: SettingsTab::default(),
             about,
             version_label,
             update_message: update.message(),
@@ -190,6 +230,20 @@ impl SettingsView {
             light_theme,
             dark_theme,
             _theme_events: theme_events,
+        }
+    }
+
+    /// The tab shown.
+    #[must_use]
+    pub fn tab(&self) -> SettingsTab {
+        self.tab
+    }
+
+    /// Show `tab`.
+    pub fn set_tab(&mut self, tab: SettingsTab, cx: &mut Context<Self>) {
+        if self.tab != tab {
+            self.tab = tab;
+            cx.notify();
         }
     }
 
@@ -209,11 +263,7 @@ impl SettingsView {
     fn render_appearance(&self, cx: &mut Context<Self>) -> impl IntoElement {
         v_flex()
             .id("settings-appearance")
-            .role(Role::Group)
-            .aria_label("Appearance")
-            .test_support()
             .gap_2()
-            .pt_4()
             .child(
                 ButtonGroup::new("appearance-buttons")
                     .outline()
@@ -293,11 +343,7 @@ impl SettingsView {
         let busy = self.update.busy();
         v_flex()
             .id("settings-updates")
-            .role(Role::Group)
-            .aria_label("Updates")
-            .test_support()
             .gap_2()
-            .pt_4()
             .child(
                 div()
                     .id("update-status")
@@ -334,22 +380,13 @@ impl SettingsView {
                     })),
             )
     }
-}
 
-impl Render for SettingsView {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render_about(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme();
         let repository = self.about.repository.clone();
         v_flex()
-            .id("settings")
-            .role(Role::Region)
-            .aria_label("Settings")
-            .test_support()
-            .size_full()
+            .id("settings-about")
             .gap_2()
-            .p_6()
-            .bg(theme.background)
-            .text_color(theme.foreground)
             .child(
                 div()
                     .id("settings-app-name")
@@ -377,8 +414,51 @@ impl Render for SettingsView {
                         .on_click(move |_, _, cx| cx.open_url(&repository)),
                 ),
             )
-            .child(self.render_appearance(cx))
-            .child(self.render_updates(cx))
+    }
+}
+
+impl Render for SettingsView {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let tabs = TabBar::new("settings-tabs")
+            .underline()
+            .px_4()
+            .selected_index(self.tab.index())
+            .children(
+                SettingsTab::ALL
+                    .iter()
+                    .map(|tab| Tab::new().label(tab.label())),
+            )
+            .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                if let Some(tab) = SettingsTab::ALL.get(*ix) {
+                    this.set_tab(*tab, cx);
+                }
+            }));
+        let panel = match self.tab {
+            SettingsTab::Appearance => self.render_appearance(cx).into_any_element(),
+            SettingsTab::Updates => self.render_updates(cx).into_any_element(),
+            SettingsTab::About => self.render_about(cx).into_any_element(),
+        };
+        let theme = cx.theme();
+        v_flex()
+            .id("settings")
+            .role(Role::Region)
+            .aria_label("Settings")
+            .test_support()
+            .size_full()
+            .pt_2()
+            .bg(theme.background)
+            .text_color(theme.foreground)
+            .child(tabs)
+            .child(
+                div()
+                    .id("settings-panel")
+                    .role(Role::TabPanel)
+                    .aria_label(self.tab.panel_label())
+                    .test_support()
+                    .flex_1()
+                    .p_6()
+                    .child(panel),
+            )
     }
 }
 
@@ -402,6 +482,13 @@ mod tests {
 
     use super::*;
 
+    /// Click the `ix`th tab in the settings window's tab bar.
+    fn click_tab(window: &mut Window, ix: usize, cx: &mut App) {
+        window.render_frame(cx);
+        window.within("settings-tabs").click(ix, cx);
+        window.render_frame(cx);
+    }
+
     #[gpui_kit::test]
     fn shows_the_app_and_opens_the_repository(cx: &mut TestAppContext) {
         let about = About {
@@ -422,7 +509,7 @@ mod tests {
             .0
         });
         cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
+            click_tab(window, 2, cx);
             window.find_by_label("Settings");
             window.find_by_label("Vikui");
             window.find_by_label("Version 1.2.3");
@@ -481,6 +568,8 @@ mod tests {
         let set = |cx: &mut TestAppContext, status: UpdateStatus| {
             cx.update(|cx| view.update(cx, |view, cx| view.set_update_status(status, cx)));
         };
+        cx.update_window(handle, |_, window, cx| click_tab(window, 1, cx))
+            .unwrap();
 
         assert!(has_label(cx, "Check for Updates"));
         click(cx, "check-for-updates");
@@ -619,6 +708,8 @@ mod tests {
             })
             .detach();
         });
+        cx.update_window(handle, |_, window, cx| click_tab(window, 1, cx))
+            .unwrap();
         let toggle = |cx: &mut TestAppContext| {
             cx.update_window(handle, |_, window, cx| {
                 window.render_frame(cx);
@@ -643,5 +734,72 @@ mod tests {
                 SettingsEvent::SetCheckForUpdatesOnOpen(false)
             ]
         );
+    }
+
+    #[gpui_kit::test]
+    fn switches_tabs_by_click_or_from_the_app(cx: &mut TestAppContext) {
+        let about = About {
+            name: "Vikui".into(),
+            version: "1.2.3".into(),
+            repository: "https://example.com/vikui".into(),
+        };
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            open(
+                WindowOptions::default(),
+                about,
+                true,
+                ThemeChoices::default(),
+                cx,
+            )
+            .unwrap()
+        });
+        let tab = |cx: &mut TestAppContext| cx.update(|cx| view.read(cx).tab());
+        let shows = |cx: &mut TestAppContext, label: &str| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.try_find_by_label(label).is_some()
+            })
+            .unwrap()
+        };
+
+        // Appearance first; the other tabs' controls are not shown.
+        assert_eq!(tab(cx), SettingsTab::Appearance);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let tabs = window.find_all_by_role(Role::Tab);
+            assert_eq!(tabs.len(), 3);
+            assert_eq!(
+                window.within("settings-tabs").find(0_usize).selected(),
+                Some(true)
+            );
+            window.find_by_label("Appearance");
+            window.find_by_label("Updates");
+            window.find_by_label("About");
+            window.find_by_label("Appearance settings");
+            assert_eq!(window.find_all_by_role(Role::TabPanel).len(), 1);
+        })
+        .unwrap();
+        assert!(shows(cx, "Light theme"));
+        assert!(!shows(cx, "Check for Updates"));
+        assert!(!shows(cx, "Version 1.2.3"));
+
+        cx.update_window(handle, |_, window, cx| click_tab(window, 2, cx))
+            .unwrap();
+        assert_eq!(tab(cx), SettingsTab::About);
+        assert!(shows(cx, "Version 1.2.3"));
+        assert!(!shows(cx, "Light theme"));
+
+        // The app brings Updates forward, e.g. when one is available.
+        cx.update(|cx| view.update(cx, |view, cx| view.set_tab(SettingsTab::Updates, cx)));
+        assert!(shows(cx, "Check for Updates"));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            assert_eq!(
+                window.within("settings-tabs").find(1_usize).selected(),
+                Some(true)
+            );
+        })
+        .unwrap();
     }
 }
