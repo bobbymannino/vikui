@@ -37,7 +37,7 @@ pub fn open(cx: &mut App) {
         crate::app_windows::WindowKind::NewReminder,
         "New Reminder",
         520.,
-        640.,
+        684.,
         cx,
     );
     let (handle, view) = match new_reminder_ui::open(options, new_reminder::now_in(&zone), cx) {

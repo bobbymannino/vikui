@@ -50,7 +50,7 @@ pub fn open(task_id: i64, cx: &mut App) {
         crate::app_windows::WindowKind::EditTask,
         "Edit Task",
         520.,
-        640.,
+        684.,
         cx,
     );
     let (handle, view) = match new_reminder_ui::open_edit(options, cx) {
