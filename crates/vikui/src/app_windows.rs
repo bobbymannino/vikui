@@ -88,6 +88,16 @@ pub fn track(kind: WindowKind, handle: AnyWindowHandle, cx: &mut App) {
     .ok();
 }
 
+/// An open `kind` window, if there is one (the first opened of several).
+pub fn find(kind: WindowKind, cx: &mut App) -> Option<AnyWindowHandle> {
+    let windows = cx.windows();
+    let open = &mut cx.default_global::<OpenWindows>().0;
+    open.retain(|(handle, _)| windows.contains(handle));
+    open.iter()
+        .find(|(_, open)| *open == kind)
+        .map(|(handle, _)| *handle)
+}
+
 fn initial_bounds(kind: WindowKind, default_size: Size<Pixels>, cx: &mut App) -> WindowBounds {
     let saved = crate::app_preferences::get(cx)
         .windows
@@ -348,6 +358,28 @@ mod tests {
             panic!("expected a windowed frame");
         };
         assert_eq!(next.size, reopen);
+    }
+
+    #[gpui_kit::test]
+    fn finds_an_open_window_by_its_kind(cx: &mut gpui_kit::TestAppContext) {
+        use gpui_kit::AppContext as _;
+        let handle = cx.update(|cx| {
+            gpui_kit::init(cx);
+            assert_eq!(find(WindowKind::Main, cx), None);
+            let options = options(WindowKind::Main, "Vikui", 960., 640., cx);
+            let (handle, _) = gpui_kit::open_window(options, cx, |_, cx| {
+                gpui_kit::AppContext::new(cx, |_| Blank)
+            })
+            .unwrap();
+            track(WindowKind::Main, handle, cx);
+            assert_eq!(find(WindowKind::Main, cx), Some(handle));
+            assert_eq!(find(WindowKind::Settings, cx), None);
+            handle
+        });
+        cx.update_window(handle, |_, window, _| window.remove_window())
+            .unwrap();
+        cx.run_until_parked();
+        assert_eq!(cx.update(|cx| find(WindowKind::Main, cx)), None);
     }
 
     #[test]
