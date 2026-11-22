@@ -6,8 +6,9 @@
 //! Pressing Cmd/Ctrl+Enter on a row reports [`RemindersEvent::OpenTask`], to open its
 //! task in a window of its own. Cmd/Ctrl+O reports [`RemindersEvent::OpenInBrowser`] and
 //! Cmd/Ctrl+E [`RemindersEvent::EditTask`]. Each row's context menu offers all three.
-//! Double-clicking a row opens, edits or marks its task done, as
-//! [`RemindersView::set_double_click`] chose ([`DoubleClickAction`]; opening by default).
+//! Double-clicking a row opens, edits or marks its task done, or opens it in the browser,
+//! as [`RemindersView::set_double_click`] chose ([`DoubleClickAction`]; opening by
+//! default).
 //!
 //! Clicking a row (or pressing Enter on it) toggles a details side panel. The view only
 //! reserves the space and reports [`RemindersEvent::ShowDetails`]; the caller supplies
@@ -147,6 +148,8 @@ pub enum DoubleClickAction {
     Edit,
     /// Report [`RemindersEvent::SetDone`], marking the task done or not done.
     ToggleDone,
+    /// Report [`RemindersEvent::OpenInBrowser`].
+    OpenInBrowser,
 }
 
 /// What the search field does.
@@ -317,6 +320,7 @@ impl RemindersView {
             DoubleClickAction::OpenDetails => self.open_task(row_ix, cx),
             DoubleClickAction::Edit => self.edit_task(row_ix, cx),
             DoubleClickAction::ToggleDone => self.toggle_done(row_ix, cx),
+            DoubleClickAction::OpenInBrowser => self.open_in_browser(row_ix, cx),
         }
     }
 
@@ -1654,6 +1658,9 @@ mod tests {
                 RemindersEvent::SetDone { task_id, done } => {
                     events.borrow_mut().push(format!("done {task_id} {done}"));
                 }
+                RemindersEvent::OpenInBrowser { task_id } => {
+                    events.borrow_mut().push(format!("browser {task_id}"));
+                }
                 _ => {}
             })
             .detach();
@@ -1671,7 +1678,11 @@ mod tests {
         double_click(cx, DoubleClickAction::OpenDetails);
         double_click(cx, DoubleClickAction::Edit);
         double_click(cx, DoubleClickAction::ToggleDone);
-        assert_eq!(*events.borrow(), ["open 1", "edit 1", "done 1 true"]);
+        double_click(cx, DoubleClickAction::OpenInBrowser);
+        assert_eq!(
+            *events.borrow(),
+            ["open 1", "edit 1", "done 1 true", "browser 1"]
+        );
     }
 
     #[gpui_kit::test]
