@@ -8,7 +8,7 @@ use gpui_kit::{App, Menu, MenuItem, OsAction};
 
 use crate::app_actions::{
     CheckForUpdates, CloseWindow, Minimize, NewReminder, OpenProjects, OpenSettings, Quit, Refresh,
-    Zoom,
+    SearchAllTasks, Zoom,
 };
 #[cfg(target_os = "macos")]
 use crate::app_actions::{Hide, HideOthers, ShowAll};
@@ -41,6 +41,8 @@ fn menus(projects: Vec<MenuItem>) -> Vec<Menu> {
             MenuItem::os_action("Copy", Copy, OsAction::Copy),
             MenuItem::os_action("Paste", Paste, OsAction::Paste),
             MenuItem::os_action("Select All", SelectAll, OsAction::SelectAll),
+            MenuItem::separator(),
+            MenuItem::action("Search All Tasks…", SearchAllTasks),
         ]),
         Menu::new("View").items([MenuItem::action("Refresh", Refresh)]),
         Menu::new("Projects").items(projects),
@@ -103,6 +105,12 @@ mod tests {
             ["Vikui", "File", "Edit", "View", "Projects", "Window"]
         );
         assert!(menus.iter().any(|menu| names(menu).contains(&"Refresh")));
+        assert!(
+            menus
+                .iter()
+                .find(|menu| menu.name.as_ref() == "Edit")
+                .is_some_and(|menu| names(menu).contains(&"Search All Tasks…"))
+        );
         assert!(
             menus
                 .last()

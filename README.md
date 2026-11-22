@@ -96,6 +96,11 @@ Pick what double-clicking a reminder does on the **Reminders** tab of **Settings
 its details in a new window (the default), edit the task, mark it done or not done, or
 open it in the browser.
 
+Search by label as well as text: `*label` (as in Vikunja's quick add) finds tasks with a
+label starting with that name, and `*"two words"` one with a space in it. `rent *bills`
+finds tasks matching "rent" labelled Bills; several labels must all be on the task. This
+works in the main window's search, the search window and a reminders window's filter.
+
 Task descriptions are written in Markdown: **bold**, *italic*, `code`, links, headings,
 lists and task lists (`- [ ]`) and quotes. The details panel shows them formatted, and
 Vikui saves them in the rich text Vikunja's web app shows, so they look the same there.
@@ -122,6 +127,7 @@ Vikui must be able to write to the folder it is installed in. On macOS, move
 | `Mod+1`–`Mod+9`   | Open one of the first nine projects      |
 | `Mod+R`           | Refresh the projects or reminders list   |
 | `Mod+F`           | Search all tasks / filter reminders      |
+| `Mod+Shift+F`     | Search all tasks, from any window        |
 | `Enter`           | Open a project / toggle reminder details |
 | `Mod+Enter`       | Open the selected task in its own window |
 | `Mod+O`           | Open the selected task in the browser    |

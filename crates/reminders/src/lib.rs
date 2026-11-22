@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use vikunja::{
-    Client, Error, Project, ProjectKind, RelativeReminder, RelativeTo, Repeat, Task, TaskQuery,
-    Token,
+    Client, Error, Label, Project, ProjectKind, RelativeReminder, RelativeTo, Repeat, Task,
+    TaskQuery, Token,
 };
 
 /// One reminder, flattened out of its task, or a task that has no reminder set.
@@ -312,25 +312,96 @@ pub fn normalize(text: &str) -> String {
         .collect()
 }
 
-/// A search over reminder titles, ignoring case, spaces and punctuation.
+/// Search text split into its words and its labels: `*name` (as in Vikunja's quick add)
+/// or `*"two words"` asks for tasks with a label starting with that name.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SearchTerms {
+    /// The words that aren't labels, separated by single spaces.
+    pub text: String,
+    /// The label names asked for, as typed (without `*` or quotes); none are empty.
+    pub labels: Vec<String>,
+}
+
+impl SearchTerms {
+    #[must_use]
+    pub fn parse(query: &str) -> Self {
+        let mut words: Vec<&str> = Vec::new();
+        let mut labels = Vec::new();
+        let mut rest = query.trim_start();
+        while !rest.is_empty() {
+            let (term, after) = if let Some(quoted) = rest.strip_prefix("*\"") {
+                let end = quoted.find('"').unwrap_or(quoted.len());
+                let after = quoted.get(end + 1..).unwrap_or("");
+                (Some(&quoted[..end]), after)
+            } else {
+                let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+                let (word, after) = rest.split_at(end);
+                let label = word.strip_prefix('*');
+                if label.is_none() {
+                    words.push(word);
+                }
+                (label, after)
+            };
+            if let Some(label) = term.map(str::trim).filter(|label| !label.is_empty()) {
+                labels.push(label.to_owned());
+            }
+            rest = after.trim_start();
+        }
+        Self {
+            text: words.join(" "),
+            labels,
+        }
+    }
+
+    /// Whether `title`, a label's, is one these terms ask for.
+    #[must_use]
+    pub fn is_label_wanted(&self, title: &str) -> bool {
+        let title = normalize(title);
+        self.labels
+            .iter()
+            .any(|label| title.starts_with(&normalize(label)))
+    }
+}
+
+/// A search over reminder titles, ignoring case, spaces and punctuation, and over their
+/// task's labels with `*label` terms (see [`SearchTerms`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Search {
-    /// [`normalize`]d query; empty matches everything.
+    /// [`normalize`]d words; empty matches every title.
     query: String,
+    /// [`normalize`]d label names; a task needs a label starting with each.
+    labels: Vec<String>,
 }
 
 impl Search {
     #[must_use]
     pub fn new(query: &str) -> Self {
+        let terms = SearchTerms::parse(query);
         Self {
-            query: normalize(query),
+            query: normalize(&terms.text),
+            labels: terms
+                .labels
+                .iter()
+                .map(|label| normalize(label))
+                .filter(|label| !label.is_empty())
+                .collect(),
         }
     }
 
     /// Whether the query has anything left to match on; "" and "!?" do not.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.query.is_empty()
+        self.query.is_empty() && self.labels.is_empty()
+    }
+
+    /// Whether `labels`, a task's, include one starting with each label asked for.
+    #[must_use]
+    pub fn matches_labels(&self, labels: &[TaskLabel]) -> bool {
+        self.labels.iter().all(|wanted| {
+            labels
+                .iter()
+                .any(|label| normalize(&label.title).starts_with(wanted.as_str()))
+        })
     }
 
     /// Whether `key`, already [`normalize`]d, contains the query.
@@ -454,6 +525,8 @@ pub enum Source {
         title: String,
     },
     Filter(String),
+    /// Tasks in every project matching the text and `*label` terms (see
+    /// [`SearchTerms`]); a blank search lists nothing.
     Search(String),
 }
 
@@ -465,22 +538,49 @@ impl Source {
                 format!("Reminders – {title}")
             }
             Self::Filter(filter) => format!("Reminders – filter “{filter}”"),
+            Self::Search(_) if self.is_blank_search() => "Search all tasks".to_owned(),
             Self::Search(text) => format!("Search – “{text}”"),
         }
     }
 
     /// Fetch the tasks this source covers. Blocks; run it on a background task.
+    ///
+    /// A search with `*label` terms (see [`SearchTerms`]) lists only tasks with a label
+    /// starting with each, and none if no label does.
     pub fn tasks(&self, client: &Client, token: &Token) -> Result<Vec<Task>, Error> {
+        if self.is_blank_search() {
+            return Ok(Vec::new());
+        }
         let query = match self.direct_query() {
             Some(query) => query,
             None => match self {
                 Self::SavedFilter { filter_id, .. } => {
                     client.saved_filter(token, *filter_id)?.query()
                 }
+                Self::Search(text) => {
+                    let terms = SearchTerms::parse(text);
+                    let Some(query) = label_search(&terms, &client.labels(token)?) else {
+                        return Ok(Vec::new());
+                    };
+                    let mut tasks = client.tasks(token, &query)?;
+                    tasks.retain(|task| has_wanted_labels(&terms, task));
+                    return Ok(tasks);
+                }
                 _ => TaskQuery::default(),
             },
         };
         client.tasks(token, &query)
+    }
+
+    /// A search with nothing to search for, which lists nothing (rather than every task).
+    fn is_blank_search(&self) -> bool {
+        match self {
+            Self::Search(text) => {
+                let terms = SearchTerms::parse(text);
+                terms.text.trim().is_empty() && terms.labels.is_empty()
+            }
+            _ => false,
+        }
     }
 
     /// The query, when it is known without asking the server.
@@ -496,9 +596,57 @@ impl Source {
             }
             Self::SavedFilter { .. } => None,
             Self::Filter(filter) => Some(TaskQuery::filter(filter.clone())),
-            Self::Search(text) => Some(TaskQuery::search(text.clone())),
+            Self::Search(text) => {
+                let terms = SearchTerms::parse(text);
+                terms
+                    .labels
+                    .is_empty()
+                    .then(|| TaskQuery::search(terms.text))
+            }
         }
     }
+}
+
+/// The query for a search with labels, given every label there is: its words, and any of
+/// the labels asked for. `None` when some label asked for matches no label, so no task
+/// can match.
+fn label_search(terms: &SearchTerms, labels: &[Label]) -> Option<TaskQuery> {
+    let mut ids = BTreeSet::new();
+    for wanted in &terms.labels {
+        let one = SearchTerms {
+            labels: vec![wanted.clone()],
+            ..SearchTerms::default()
+        };
+        let matching: Vec<i64> = labels
+            .iter()
+            .filter(|label| one.is_label_wanted(&label.title))
+            .map(|label| label.id)
+            .collect();
+        if matching.is_empty() {
+            return None;
+        }
+        ids.extend(matching);
+    }
+    let ids: Vec<String> = ids.iter().map(ToString::to_string).collect();
+    Some(TaskQuery {
+        filter: Some(format!("labels in {}", ids.join(","))),
+        search: Some(terms.text.clone()).filter(|text| !text.is_empty()),
+        ..TaskQuery::default()
+    })
+}
+
+/// Whether `task` has a label starting with each one `terms` asks for (the server's
+/// `labels in` matches any of them).
+fn has_wanted_labels(terms: &SearchTerms, task: &Task) -> bool {
+    terms.labels.iter().all(|wanted| {
+        let one = SearchTerms {
+            labels: vec![wanted.clone()],
+            ..SearchTerms::default()
+        };
+        task.labels
+            .iter()
+            .any(|label| one.is_label_wanted(&label.title))
+    })
 }
 
 /// Give each of `reminders` without a colour of its own its project's, from `projects`.
@@ -737,12 +885,12 @@ mod tests {
         let tasks = [Task {
             priority: 4,
             labels: vec![
-                vikunja::Label {
+                Label {
                     id: 1,
                     title: "Bills".into(),
                     hex_color: "ff0000".into(),
                 },
-                vikunja::Label {
+                Label {
                     id: 2,
                     title: "Home".into(),
                     hex_color: String::new(),
@@ -787,8 +935,46 @@ mod tests {
 
         let empty = Search::new("?!");
         assert!(empty.is_empty());
+        assert!(!Search::new("*work").is_empty());
         assert!(empty.matches("anything"));
         assert!(Search::default().matches(""));
+    }
+
+    #[test]
+    fn splits_labels_out_of_search_text() {
+        let terms = SearchTerms::parse("  pay *Bills rent *\"Next week\" *  ");
+        assert_eq!(terms.text, "pay rent");
+        assert_eq!(terms.labels, ["Bills", "Next week"]);
+        assert_eq!(SearchTerms::parse("*\"open").labels, ["open"]);
+        assert_eq!(
+            SearchTerms::parse("2*3"),
+            SearchTerms {
+                text: "2*3".into(),
+                labels: Vec::new(),
+            }
+        );
+        assert!(terms.is_label_wanted("bills-2026"));
+        assert!(terms.is_label_wanted("NEXT WEEK"));
+        assert!(!terms.is_label_wanted("Work"));
+    }
+
+    #[test]
+    fn searches_by_label() {
+        let label = |title: &str| TaskLabel {
+            id: 1,
+            title: title.into(),
+            rgb: None,
+        };
+        let both = [label("Work"), label("Urgent!")];
+        let search = Search::new("*work *urg");
+        assert!(search.matches_labels(&both));
+        assert!(!search.matches_labels(&both[..1]), "every label is needed");
+        assert!(search.matches(""), "no words: any title");
+        assert!(
+            Search::new("rent").matches_labels(&[]),
+            "no labels asked for"
+        );
+        assert!(!Search::new("*home").matches_labels(&both));
     }
 
     #[test]
@@ -839,12 +1025,54 @@ mod tests {
                 .and_then(|query| query.search),
             Some("rent".to_owned())
         );
+        let blank = Source::Search("  * ".into());
+        assert!(blank.is_blank_search());
+        assert_eq!(blank.title(), "Search all tasks");
+        assert!(!Source::Search("*bills".into()).is_blank_search());
+        assert_eq!(
+            Source::Search("rent *bills".into()).direct_query(),
+            None,
+            "labels need the server's"
+        );
         let saved = Source::SavedFilter {
             filter_id: 2,
             title: "This week".into(),
         };
         assert_eq!(saved.title(), "Reminders – This week");
         assert_eq!(saved.direct_query(), None);
+    }
+
+    #[test]
+    fn searches_every_project_by_label() {
+        let label = |id, title: &str| Label {
+            id,
+            title: title.into(),
+            ..Label::default()
+        };
+        let labels = [label(1, "Bills"), label(2, "Bills 2026"), label(3, "Work")];
+        let terms = SearchTerms::parse("rent *bills *work");
+        let query = label_search(&terms, &labels).expect("every label matches");
+        assert_eq!(query.filter.as_deref(), Some("labels in 1,2,3"));
+        assert_eq!(query.search.as_deref(), Some("rent"));
+        assert_eq!(
+            label_search(&SearchTerms::parse("*work"), &labels).and_then(|q| q.search),
+            None
+        );
+        assert_eq!(label_search(&SearchTerms::parse("*home"), &labels), None);
+
+        let task = |ids: &[i64]| Task {
+            labels: labels
+                .iter()
+                .filter(|l| ids.contains(&l.id))
+                .cloned()
+                .collect(),
+            ..Task::default()
+        };
+        assert!(has_wanted_labels(&terms, &task(&[2, 3])));
+        assert!(
+            !has_wanted_labels(&terms, &task(&[1])),
+            "needs a match for each"
+        );
     }
 
     fn label(id: i64, title: &str) -> TaskLabel {

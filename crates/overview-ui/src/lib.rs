@@ -1,8 +1,9 @@
 //! Vikui's main window, shown once the user is signed in.
 //!
 //! The window is a shell: the app passes in the view to show, so this crate does not
-//! depend on other UI crates. Above it, a search field looks for tasks in every project:
-//! Enter reports [`OverviewEvent::Search`] and the app shows the results. Cmd/Ctrl+F
+//! depend on other UI crates. Above it, a search field looks for tasks in every project,
+//! by text and by `*label`: Enter reports [`OverviewEvent::Search`] and the app shows the
+//! results. Cmd/Ctrl+F
 //! focuses the field; Escape clears it. Beside it, a Settings button reports
 //! [`OverviewEvent::OpenSettings`].
 
@@ -64,7 +65,7 @@ impl Overview {
     fn new(content: AnyView, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let search = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Search all tasks")
+                .placeholder("Search all tasks, or *label")
                 .clean_on_escape()
         });
         let search_events = cx.subscribe(&search, |this, _, event: &InputEvent, cx| {

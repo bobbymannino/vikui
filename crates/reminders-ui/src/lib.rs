@@ -18,9 +18,11 @@
 //! loads the reminders again and passes them to [`RemindersView::set_reminders`].
 //!
 //! The search field (Cmd/Ctrl+F) filters the list by task title, ignoring case, spaces
-//! and punctuation (see [`reminders::Search`]). Enter moves to the results; Escape clears.
+//! and punctuation, and by label with `*label` terms (see [`reminders::Search`]). Enter
+//! moves to the results; Escape clears.
 //! A search window ([`open_search`]) instead holds the server search the list shows:
-//! Enter reports [`RemindersEvent::Search`] and the caller lists the new results.
+//! Enter reports [`RemindersEvent::Search`] and the caller lists the new results. Opened
+//! with no search, it asks for one; [`RemindersView::focus_search`] puts the cursor there.
 //!
 //! Below it, a status filter lists all tasks, only those done or not done, or only
 //! overdue ones (see [`reminders::StatusFilter`]), and one chip per label on the listed
@@ -181,6 +183,8 @@ pub struct RemindersView {
     error: Option<SharedString>,
     /// Waiting for reminders (the first load or a refresh).
     loading: bool,
+    /// A search window opened without a search, waiting for one.
+    awaiting_search: bool,
     /// What the rows were made from; rows refer to it by `order`.
     reminders: Vec<Reminder>,
     matched_tasks: Option<usize>,
@@ -252,7 +256,7 @@ impl RemindersView {
 
         let search = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Search reminders")
+                .placeholder("Search reminders, or *label")
                 .clean_on_escape()
         });
         let search_events = cx.subscribe_in(
@@ -282,6 +286,7 @@ impl RemindersView {
             table,
             search,
             search_mode: SearchMode::List,
+            awaiting_search: false,
             query: Search::default(),
             labels: Vec::new(),
             label_filter: LabelFilter::default(),
@@ -380,10 +385,12 @@ impl RemindersView {
     pub fn set_server_search(&mut self, text: &str, window: &mut Window, cx: &mut Context<Self>) {
         self.search_mode = SearchMode::Server;
         self.title = search_title(text);
-        self.loading = true;
+        self.awaiting_search = text.trim().is_empty();
+        // Nothing to wait for until there is a search.
+        self.loading = !self.awaiting_search;
         let text = SharedString::from(text.to_owned());
         self.search.update(cx, |search, cx| {
-            search.set_placeholder("Search all tasks", window, cx);
+            search.set_placeholder("Search all tasks, or *label", window, cx);
             search.set_value(text, window, cx);
         });
         cx.notify();
@@ -395,6 +402,7 @@ impl RemindersView {
             return false;
         }
         self.loading = true;
+        self.awaiting_search = false;
         self.title = search_title(text);
         cx.emit(RemindersEvent::Search(text.to_owned().into()));
         cx.notify();
@@ -429,6 +437,12 @@ impl RemindersView {
             self.label_filter.clear();
             self.refresh_rows(cx);
         }
+    }
+
+    /// Put the cursor in the search field, with its text selected to type over.
+    pub fn focus_search(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.search.read(cx).focus_handle(cx).focus(window, cx);
+        window.dispatch_action(Box::new(gpui_kit::component::input::SelectAll), cx);
     }
 
     fn on_focus_search(&mut self, _: &FocusSearch, window: &mut Window, cx: &mut Context<Self>) {
@@ -472,13 +486,18 @@ impl RemindersView {
         rows.retain(|row| {
             self.query.matches_normalized(&row.search_key)
                 && self.reminders.get(row.order).is_some_and(|reminder| {
-                    self.label_filter.matches(reminder) && self.status_filter.matches(reminder, now)
+                    self.query.matches_labels(&reminder.task_labels)
+                        && self.label_filter.matches(reminder)
+                        && self.status_filter.matches(reminder, now)
                 })
         });
         let mut summary = summary(set, upcoming, self.matched_tasks);
         let query = self.query_text.trim();
         let empty_message = if self.status_filter == StatusFilter::All {
             match (self.query.is_empty(), self.label_filter.is_empty()) {
+                (true, true) if self.awaiting_search => {
+                    "Type a search and press Enter. Use *label to search by label.".into()
+                }
                 (true, true) => empty_message(self.matched_tasks),
                 (false, true) => format!("Nothing matches “{query}”.").into(),
                 (true, false) => "No reminders have all the selected labels.".into(),
@@ -889,7 +908,12 @@ impl RemindersView {
 
 /// The heading for the results of searching for `text`.
 fn search_title(text: &str) -> SharedString {
-    format!("Search – “{text}”").into()
+    let text = text.trim();
+    if text.is_empty() {
+        "Search all tasks".into()
+    } else {
+        format!("Search – “{text}”").into()
+    }
 }
 
 /// Open a search window for the tasks matching `text` in every project, loading until
@@ -1342,6 +1366,28 @@ mod tests {
 
         search(cx, "PAY rent");
         assert_eq!(titles(cx), ["Pay-Rent!", "pay rent (flat 2)"]);
+        // `*label` terms filter by the task's labels.
+        cx.update(|cx| {
+            view.update(cx, |view, cx| {
+                let bills = reminders::TaskLabel {
+                    id: 4,
+                    title: "Bills".into(),
+                    rgb: None,
+                };
+                let mut reminders = view.reminders.clone();
+                if let Some(flat) = reminders.get_mut(2) {
+                    flat.task_labels = vec![bills];
+                }
+                view.set_reminders(&reminders, None, cx);
+            });
+        });
+        search(cx, "*bill");
+        assert_eq!(titles(cx), ["pay rent (flat 2)"]);
+        search(cx, "pay *\"bills\"");
+        assert_eq!(titles(cx), ["pay rent (flat 2)"]);
+        search(cx, "call *bills");
+        assert_eq!(titles(cx), Vec::<String>::new());
+        search(cx, "PAY rent");
         assert!(
             cx.update(|cx| view.read(cx).summary.ends_with("· 2 of 3 shown")),
             "summary counts shown rows"
@@ -1438,6 +1484,58 @@ mod tests {
 
         show(cx, "Show all", 0);
         assert_eq!(titles(cx), ["Late", "Later", "Paid"]);
+    }
+
+    #[gpui_kit::test]
+    fn an_empty_search_window_asks_for_a_search(cx: &mut TestAppContext) {
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            open_search(options(), "", cx).unwrap()
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = Rc::clone(&events);
+            cx.subscribe(&view, move |_, event: &RemindersEvent, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        assert_eq!(
+            cx.update(|cx| view.read(cx).title.clone()),
+            "Search all tasks"
+        );
+        cx.update(|cx| view.update(cx, |view, cx| view.set_reminders(&[], Some(0), cx)));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find_by_label("Type a search and press Enter. Use *label to search by label.");
+            view.update(cx, |view, cx| view.focus_search(window, cx));
+        })
+        .unwrap();
+        cx.run_until_parked();
+        let focused = cx
+            .update_window(handle, |_, window, cx| {
+                view.read(cx)
+                    .search
+                    .read(cx)
+                    .focus_handle(cx)
+                    .is_focused(window)
+            })
+            .unwrap();
+        assert!(focused, "the search field has the cursor");
+
+        cx.update_window(handle, |_, window, cx| {
+            let search = view.read(cx).search.clone();
+            search.update(cx, |search, cx| search.set_value("*bills", window, cx));
+            window.key_down("enter", false, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(*events.borrow(), [RemindersEvent::Search("*bills".into())]);
+        assert_eq!(
+            cx.update(|cx| view.read(cx).title.clone()),
+            "Search – “*bills”"
+        );
     }
 
     #[gpui_kit::test]

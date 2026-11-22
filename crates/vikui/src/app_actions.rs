@@ -1,6 +1,6 @@
 //! App-wide actions and their key bindings: quitting, closing and arranging windows,
-//! refreshing whatever the focused window shows, adding a reminder, and opening the
-//! projects window or settings.
+//! refreshing whatever the focused window shows, adding a reminder, searching every
+//! project, and opening the projects window or settings.
 //!
 //! These bindings have no context, so a view's own binding for the same keys wins.
 
@@ -21,6 +21,7 @@ gpui_kit::actions!(
         CheckForUpdates,
         NewReminder,
         OpenProjects,
+        SearchAllTasks,
     ]
 );
 
@@ -37,6 +38,8 @@ fn bindings() -> Vec<(&'static str, Box<dyn Action>)> {
         bind("secondary-n", NewReminder),
         // Like Mail's Cmd+0 for its main window; beside Cmd/Ctrl+1 to 9 for the projects.
         bind("secondary-0", OpenProjects),
+        // Mod+F searches within a window; with Shift, every project from any window.
+        bind("secondary-shift-f", SearchAllTasks),
         // Minimizing and hiding are macOS conventions; elsewhere the window manager owns
         // those shortcuts.
         #[cfg(target_os = "macos")]
@@ -69,6 +72,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &CheckForUpdates, cx| crate::settings_window::check_for_updates(cx));
     cx.on_action(|_: &NewReminder, cx| crate::new_reminder_window::open(cx));
     cx.on_action(|_: &OpenProjects, cx| crate::open_projects(cx));
+    cx.on_action(|_: &SearchAllTasks, cx| crate::reminders_window::show_search(cx));
     cx.on_action(|_: &Refresh, cx| {
         // Each list view has its own refresh action; only the focused one handles it.
         // This binding outranks the views' own when focus sits in a nested context (such
