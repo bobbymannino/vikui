@@ -96,6 +96,10 @@ Pick what double-clicking a reminder does on the **Reminders** tab of **Settings
 its details in a new window (the default), edit the task, mark it done or not done, or
 open it in the browser.
 
+Task descriptions are written in Markdown: **bold**, *italic*, `code`, links, headings,
+lists and task lists (`- [ ]`) and quotes. The details panel shows them formatted, and
+Vikui saves them in the rich text Vikunja's web app shows, so they look the same there.
+
 Preferences are saved in `preferences.json` in `~/Library/Application Support/vikui` on
 macOS, `~/.config/vikui` on Linux and `%APPDATA%\vikui` on Windows. They include how you
 last arranged the projects and reminders tables: drag a header to move its column, drag
