@@ -1541,7 +1541,7 @@ dependencies = [
 
 [[package]]
 name = "description"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "markdown",
 ]
@@ -4391,7 +4391,7 @@ dependencies = [
 
 [[package]]
 name = "login"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "anyhow",
  "keyring",
@@ -4404,7 +4404,7 @@ dependencies = [
 
 [[package]]
 name = "login-ui"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gpui-kit",
  "log",
@@ -4742,7 +4742,7 @@ dependencies = [
 
 [[package]]
 name = "new-reminder"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "description",
  "jiff 1.0.0",
@@ -4752,7 +4752,7 @@ dependencies = [
 
 [[package]]
 name = "new-reminder-ui"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "chrono",
  "gpui-kit",
@@ -5452,7 +5452,7 @@ dependencies = [
 
 [[package]]
 name = "overview-ui"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gpui-kit",
  "log",
@@ -5862,7 +5862,7 @@ checksum = "925383efa346730478fb4838dbe9137d2a47675ad789c546d150a6e1dd4ab31c"
 
 [[package]]
 name = "preferences"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "dirs 7.0.0",
  "log",
@@ -5917,7 +5917,7 @@ dependencies = [
 
 [[package]]
 name = "projects-ui"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gpui-kit",
  "log",
@@ -6368,7 +6368,7 @@ checksum = "d6f6ff9a378485b298a5286656da665ba74413d36db0979633275d2e708145d4"
 
 [[package]]
 name = "reminder-details"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "description",
  "jiff 1.0.0",
@@ -6378,7 +6378,7 @@ dependencies = [
 
 [[package]]
 name = "reminder-details-ui"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gpui-kit",
  "jiff 1.0.0",
@@ -6389,7 +6389,7 @@ dependencies = [
 
 [[package]]
 name = "reminders"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "jiff 1.0.0",
  "vikunja",
@@ -6397,7 +6397,7 @@ dependencies = [
 
 [[package]]
 name = "reminders-ui"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gpui-kit",
  "jiff 1.0.0",
@@ -7014,7 +7014,7 @@ dependencies = [
 
 [[package]]
 name = "settings-ui"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "gpui-kit",
 ]
@@ -7436,7 +7436,7 @@ dependencies = [
 
 [[package]]
 name = "table-layout"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "serde",
  "serde_json",
@@ -8008,7 +8008,7 @@ checksum = "8ecb6da28b8a351d773b68d5825ac39017e680750f980f3a1a85cd8dd28a47c1"
 
 [[package]]
 name = "updater"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "flate2",
  "log",
@@ -8187,7 +8187,7 @@ checksum = "0b928f33d975fc6ad9f86c8f283853ad26bdd5b10b7f1542aa2fa15e2289105a"
 
 [[package]]
 name = "vikui"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "env_logger",
  "gpui-kit",
@@ -8214,7 +8214,7 @@ dependencies = [
 
 [[package]]
 name = "vikunja"
-version = "0.7.0"
+version = "0.8.0"
 dependencies = [
  "jiff 1.0.0",
  "log",
