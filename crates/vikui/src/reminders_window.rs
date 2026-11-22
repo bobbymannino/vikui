@@ -239,6 +239,20 @@ fn fill(
     }
 }
 
+/// Make double-clicking a reminder in every open reminders and search window do `action`.
+pub fn set_double_click(action: preferences::DoubleClickAction, cx: &mut App) {
+    let action = double_click_action(action);
+    let views: Vec<Entity<RemindersView>> = cx
+        .try_global::<RemindersWindow>()
+        .into_iter()
+        .flat_map(|open| open.browse.iter().chain(&open.search))
+        .filter_map(|opened| opened.view.upgrade())
+        .collect();
+    for view in views {
+        view.update(cx, |view, _| view.set_double_click(action));
+    }
+}
+
 /// The list's double-click action for the saved `action`.
 fn double_click_action(action: preferences::DoubleClickAction) -> reminders_ui::DoubleClickAction {
     match action {

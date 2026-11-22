@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use gpui_kit::component::ThemeMode;
 use gpui_kit::{AnyWindowHandle, App, AppContext as _, Entity, Global, WeakEntity};
-use preferences::Appearance;
+use preferences::{Appearance, DoubleClickAction};
 use settings_ui::{About, SettingsEvent, SettingsTab, SettingsView, ThemeChoices, UpdateStatus};
 use updater::{Release, Updater};
 
@@ -133,10 +133,19 @@ fn open_view(cx: &mut App) -> Option<(Opened, bool)> {
         560.,
         cx,
     );
-    let check_on_open = crate::app_preferences::get(cx).check_for_updates_on_open;
+    let preferences = crate::app_preferences::get(cx);
+    let check_on_open = preferences.check_for_updates_on_open;
     let (handle, view) = settings_ui::open(options, about(), check_on_open, theme_choices(cx), cx)
         .inspect_err(|err| log::error!("failed to open settings window: {err:#}"))
         .ok()?;
+    let double_click = match preferences.reminder_double_click {
+        DoubleClickAction::OpenDetails => settings_ui::DoubleClickAction::OpenDetails,
+        DoubleClickAction::Edit => settings_ui::DoubleClickAction::Edit,
+        DoubleClickAction::ToggleDone => settings_ui::DoubleClickAction::ToggleDone,
+    };
+    view.update(cx, |view, cx| {
+        view.set_reminder_double_click(double_click, cx);
+    });
     crate::app_windows::track(crate::app_windows::WindowKind::Settings, handle, cx);
     let opened = Opened {
         handle,
@@ -188,6 +197,17 @@ impl Updates {
                 crate::app_preferences::update(cx, |preferences| {
                     preferences.check_for_updates_on_open = on;
                 });
+            }
+            SettingsEvent::SetReminderDoubleClick(action) => {
+                let action = match action {
+                    settings_ui::DoubleClickAction::OpenDetails => DoubleClickAction::OpenDetails,
+                    settings_ui::DoubleClickAction::Edit => DoubleClickAction::Edit,
+                    settings_ui::DoubleClickAction::ToggleDone => DoubleClickAction::ToggleDone,
+                };
+                crate::app_preferences::update(cx, |preferences| {
+                    preferences.reminder_double_click = action;
+                });
+                crate::reminders_window::set_double_click(action, cx);
             }
         })
         .detach();
