@@ -1,9 +1,10 @@
 //! Vikui's settings window.
 //!
 //! One tab per [`SettingsTab`]: Appearance lets the user pick the appearance and colour
-//! themes, Updates lets them update the app, and About shows what the app is (its name,
-//! version and a link to its source). The app supplies [`About`], the [`ThemeChoices`]
-//! and the [`UpdateStatus`], and applies themes, checks and installs when the view asks
+//! themes, Reminders what double-clicking a reminder does, Updates lets them update the
+//! app, and About shows what the app is (its name, version and a link to its source). The
+//! app supplies [`About`], the [`ThemeChoices`], the [`DoubleClickAction`] and the
+//! [`UpdateStatus`], and applies and saves changes, checks and installs when the view asks
 //! through [`SettingsEvent`]; this crate never fetches or saves. The app can bring a tab
 //! forward with [`SettingsView::set_tab`], e.g. Updates when one is available.
 
@@ -11,6 +12,7 @@ use gpui_kit::base::Selectable as _;
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::button::{Button, ButtonGroup, ButtonVariants as _};
 use gpui_kit::component::form::{field, v_form};
+use gpui_kit::component::radio::{Radio, RadioGroup};
 use gpui_kit::component::select::{Select, SelectEvent, SelectState};
 use gpui_kit::component::switch::Switch;
 use gpui_kit::component::tab::{Tab, TabBar};
@@ -110,22 +112,60 @@ impl UpdateStatus {
     }
 }
 
+/// What double-clicking a reminder does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DoubleClickAction {
+    /// Open its task in a window of its own.
+    #[default]
+    OpenDetails,
+    Edit,
+    /// Mark its task done, or not done if it is.
+    ToggleDone,
+    /// Open its task's page in the web browser.
+    OpenInBrowser,
+}
+
+impl DoubleClickAction {
+    pub const ALL: [Self; 4] = [
+        Self::OpenDetails,
+        Self::Edit,
+        Self::ToggleDone,
+        Self::OpenInBrowser,
+    ];
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::OpenDetails => "Open details in a new window",
+            Self::Edit => "Edit the task",
+            Self::ToggleDone => "Mark as done or not done",
+            Self::OpenInBrowser => "Open in browser",
+        }
+    }
+}
+
 /// A tab of the settings window.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SettingsTab {
     #[default]
     Appearance,
+    Reminders,
     Updates,
     About,
 }
 
 impl SettingsTab {
     /// In the order the tab bar shows them.
-    pub const ALL: [Self; 3] = [Self::Appearance, Self::Updates, Self::About];
+    pub const ALL: [Self; 4] = [
+        Self::Appearance,
+        Self::Reminders,
+        Self::Updates,
+        Self::About,
+    ];
 
     fn label(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance",
+            Self::Reminders => "Reminders",
             Self::Updates => "Updates",
             Self::About => "About",
         }
@@ -135,6 +175,7 @@ impl SettingsTab {
     fn panel_label(self) -> &'static str {
         match self {
             Self::Appearance => "Appearance settings",
+            Self::Reminders => "Reminder settings",
             Self::Updates => "Update settings",
             Self::About => "App information",
         }
@@ -160,11 +201,14 @@ pub enum SettingsEvent {
     InstallUpdate,
     /// The user turned checking for updates when the app opens on or off; save it.
     SetCheckForUpdatesOnOpen(bool),
+    /// The user picked what double-clicking a reminder does; apply and save it.
+    SetReminderDoubleClick(DoubleClickAction),
 }
 
 /// The settings view.
 pub struct SettingsView {
     tab: SettingsTab,
+    double_click: DoubleClickAction,
     about: About,
     version_label: SharedString,
     update: UpdateStatus,
@@ -221,6 +265,7 @@ impl SettingsView {
         ];
         Self {
             tab: SettingsTab::default(),
+            double_click: DoubleClickAction::default(),
             about,
             version_label,
             update_message: update.message(),
@@ -299,6 +344,52 @@ impl SettingsView {
                         ),
                     ),
             )
+    }
+
+    #[must_use]
+    pub fn reminder_double_click(&self) -> DoubleClickAction {
+        self.double_click
+    }
+
+    /// Show `action` as what double-clicking a reminder does, e.g. the saved choice.
+    pub fn set_reminder_double_click(&mut self, action: DoubleClickAction, cx: &mut Context<Self>) {
+        if self.double_click != action {
+            self.double_click = action;
+            cx.notify();
+        }
+    }
+
+    fn pick_reminder_double_click(&mut self, action: DoubleClickAction, cx: &mut Context<Self>) {
+        if self.double_click != action {
+            self.double_click = action;
+            cx.emit(SettingsEvent::SetReminderDoubleClick(action));
+            cx.notify();
+        }
+    }
+
+    fn render_reminders(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let selected = DoubleClickAction::ALL
+            .iter()
+            .position(|action| *action == self.double_click);
+        v_flex().id("settings-reminders").gap_2().child(
+            v_form().child(
+                field().label("Double-clicking a reminder").child(
+                    RadioGroup::vertical("reminder-double-click")
+                        .selected_index(selected)
+                        .children(
+                            DoubleClickAction::ALL
+                                .iter()
+                                .enumerate()
+                                .map(|(ix, action)| Radio::new(ix).label(action.label())),
+                        )
+                        .on_change(cx.listener(|this, ix: &usize, _, cx| {
+                            if let Some(action) = DoubleClickAction::ALL.get(*ix) {
+                                this.pick_reminder_double_click(*action, cx);
+                            }
+                        })),
+                ),
+            ),
+        )
     }
 
     #[must_use]
@@ -435,6 +526,7 @@ impl Render for SettingsView {
             }));
         let panel = match self.tab {
             SettingsTab::Appearance => self.render_appearance(cx).into_any_element(),
+            SettingsTab::Reminders => self.render_reminders(cx).into_any_element(),
             SettingsTab::Updates => self.render_updates(cx).into_any_element(),
             SettingsTab::About => self.render_about(cx).into_any_element(),
         };
@@ -482,10 +574,10 @@ mod tests {
 
     use super::*;
 
-    /// Click the `ix`th tab in the settings window's tab bar.
-    fn click_tab(window: &mut Window, ix: usize, cx: &mut App) {
+    /// Click `tab` in the settings window's tab bar.
+    fn click_tab(window: &mut Window, tab: SettingsTab, cx: &mut App) {
         window.render_frame(cx);
-        window.within("settings-tabs").click(ix, cx);
+        window.within("settings-tabs").click(tab.index(), cx);
         window.render_frame(cx);
     }
 
@@ -509,7 +601,7 @@ mod tests {
             .0
         });
         cx.update_window(handle, |_, window, cx| {
-            click_tab(window, 2, cx);
+            click_tab(window, SettingsTab::About, cx);
             window.find_by_label("Settings");
             window.find_by_label("Vikui");
             window.find_by_label("Version 1.2.3");
@@ -568,8 +660,10 @@ mod tests {
         let set = |cx: &mut TestAppContext, status: UpdateStatus| {
             cx.update(|cx| view.update(cx, |view, cx| view.set_update_status(status, cx)));
         };
-        cx.update_window(handle, |_, window, cx| click_tab(window, 1, cx))
-            .unwrap();
+        cx.update_window(handle, |_, window, cx| {
+            click_tab(window, SettingsTab::Updates, cx);
+        })
+        .unwrap();
 
         assert!(has_label(cx, "Check for Updates"));
         click(cx, "check-for-updates");
@@ -708,8 +802,10 @@ mod tests {
             })
             .detach();
         });
-        cx.update_window(handle, |_, window, cx| click_tab(window, 1, cx))
-            .unwrap();
+        cx.update_window(handle, |_, window, cx| {
+            click_tab(window, SettingsTab::Updates, cx);
+        })
+        .unwrap();
         let toggle = |cx: &mut TestAppContext| {
             cx.update_window(handle, |_, window, cx| {
                 window.render_frame(cx);
@@ -768,12 +864,13 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             let tabs = window.find_all_by_role(Role::Tab);
-            assert_eq!(tabs.len(), 3);
+            assert_eq!(tabs.len(), 4);
             assert_eq!(
                 window.within("settings-tabs").find(0_usize).selected(),
                 Some(true)
             );
             window.find_by_label("Appearance");
+            window.find_by_label("Reminders");
             window.find_by_label("Updates");
             window.find_by_label("About");
             window.find_by_label("Appearance settings");
@@ -784,8 +881,10 @@ mod tests {
         assert!(!shows(cx, "Check for Updates"));
         assert!(!shows(cx, "Version 1.2.3"));
 
-        cx.update_window(handle, |_, window, cx| click_tab(window, 2, cx))
-            .unwrap();
+        cx.update_window(handle, |_, window, cx| {
+            click_tab(window, SettingsTab::About, cx);
+        })
+        .unwrap();
         assert_eq!(tab(cx), SettingsTab::About);
         assert!(shows(cx, "Version 1.2.3"));
         assert!(!shows(cx, "Light theme"));
@@ -796,10 +895,81 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             assert_eq!(
-                window.within("settings-tabs").find(1_usize).selected(),
+                window
+                    .within("settings-tabs")
+                    .find(SettingsTab::Updates.index())
+                    .selected(),
                 Some(true)
             );
         })
         .unwrap();
+    }
+
+    #[gpui_kit::test]
+    fn picks_what_double_clicking_a_reminder_does(cx: &mut TestAppContext) {
+        let about = About {
+            name: "Vikui".into(),
+            version: "1.2.3".into(),
+            repository: "https://example.com/vikui".into(),
+        };
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            open(
+                WindowOptions::default(),
+                about,
+                true,
+                ThemeChoices::default(),
+                cx,
+            )
+            .unwrap()
+        });
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = std::rc::Rc::clone(&events);
+            cx.subscribe(&view, move |_, event, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
+            // The saved choice, shown without reporting it back.
+            view.update(cx, |view, cx| {
+                view.set_reminder_double_click(DoubleClickAction::Edit, cx);
+            });
+        });
+        let checked = |cx: &mut TestAppContext, ix: usize| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.within("reminder-double-click").find(ix).checked()
+            })
+            .unwrap()
+        };
+
+        cx.update_window(handle, |_, window, cx| {
+            click_tab(window, SettingsTab::Reminders, cx);
+            window.find_by_label("Reminder settings");
+            window.find_by_label("Open details in a new window");
+            window.find_by_label("Edit the task");
+            window.find_by_label("Mark as done or not done");
+            window.find_by_label("Open in browser");
+        })
+        .unwrap();
+        assert_eq!(checked(cx, 1), Some(true));
+        assert!(events.borrow().is_empty());
+
+        cx.update_window(handle, |_, window, cx| {
+            window.within("reminder-double-click").click(2_usize, cx);
+        })
+        .unwrap();
+        cx.run_until_parked();
+        assert_eq!(
+            cx.update(|cx| view.read(cx).reminder_double_click()),
+            DoubleClickAction::ToggleDone
+        );
+        assert_eq!(checked(cx, 2), Some(true));
+        assert_eq!(
+            *events.borrow(),
+            [SettingsEvent::SetReminderDoubleClick(
+                DoubleClickAction::ToggleDone
+            )]
+        );
     }
 }

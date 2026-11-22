@@ -3,10 +3,12 @@
 //! The view does not fetch anything: the caller passes in the reminders (from one
 //! project, a filter, or search results) and can replace them later.
 //!
-//! Double-clicking a row (or pressing Cmd/Ctrl+Enter on it) reports
-//! [`RemindersEvent::OpenTask`], to open its task in a window of its own. Cmd/Ctrl+O
-//! reports [`RemindersEvent::OpenInBrowser`] and Cmd/Ctrl+E [`RemindersEvent::EditTask`].
-//! Each row's context menu offers all three.
+//! Pressing Cmd/Ctrl+Enter on a row reports [`RemindersEvent::OpenTask`], to open its
+//! task in a window of its own. Cmd/Ctrl+O reports [`RemindersEvent::OpenInBrowser`] and
+//! Cmd/Ctrl+E [`RemindersEvent::EditTask`]. Each row's context menu offers all three.
+//! Double-clicking a row opens, edits or marks its task done, or opens it in the browser,
+//! as [`RemindersView::set_double_click`] chose ([`DoubleClickAction`]; opening by
+//! default).
 //!
 //! Clicking a row (or pressing Enter on it) toggles a details side panel. The view only
 //! reserves the space and reports [`RemindersEvent::ShowDetails`]; the caller supplies
@@ -136,6 +138,20 @@ pub enum RemindersEvent {
     TableLayoutChanged(TableLayout),
 }
 
+/// What double-clicking a row does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum DoubleClickAction {
+    /// Report [`RemindersEvent::OpenTask`].
+    #[default]
+    OpenDetails,
+    /// Report [`RemindersEvent::EditTask`].
+    Edit,
+    /// Report [`RemindersEvent::SetDone`], marking the task done or not done.
+    ToggleDone,
+    /// Report [`RemindersEvent::OpenInBrowser`].
+    OpenInBrowser,
+}
+
 /// What the search field does.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 enum SearchMode {
@@ -173,6 +189,7 @@ pub struct RemindersView {
     details_for: Option<usize>,
     /// The table layout last reported or restored, by [`RemindersTable::layout_revision`].
     layout_revision: u64,
+    double_click: DoubleClickAction,
     _table_events: Subscription,
     _table_layout: Subscription,
     _search_events: Subscription,
@@ -216,7 +233,7 @@ impl RemindersView {
             TableEvent::SelectRow(row_ix) if this.details_for.is_some() => {
                 this.show_row(*row_ix, cx);
             }
-            TableEvent::DoubleClickedRow(row_ix) => this.open_task(*row_ix, cx),
+            TableEvent::DoubleClickedRow(row_ix) => this.double_click_row(*row_ix, cx),
             TableEvent::ClearSelection => this.hide_details(cx),
             TableEvent::ColumnWidthsChanged(widths) => this.table.update(cx, |table, cx| {
                 table.delegate_mut().set_widths(widths);
@@ -278,6 +295,7 @@ impl RemindersView {
             details_panel: None,
             details_for: None,
             layout_revision: 0,
+            double_click: DoubleClickAction::default(),
             _table_events: table_events,
             _table_layout: table_layout,
             _search_events: search_events,
@@ -290,6 +308,20 @@ impl RemindersView {
             }),
         }
         this
+    }
+
+    /// Choose what double-clicking a row does.
+    pub fn set_double_click(&mut self, action: DoubleClickAction) {
+        self.double_click = action;
+    }
+
+    fn double_click_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        match self.double_click {
+            DoubleClickAction::OpenDetails => self.open_task(row_ix, cx),
+            DoubleClickAction::Edit => self.edit_task(row_ix, cx),
+            DoubleClickAction::ToggleDone => self.toggle_done(row_ix, cx),
+            DoubleClickAction::OpenInBrowser => self.open_in_browser(row_ix, cx),
+        }
     }
 
     /// Arrange the table's columns and sort as the user last left them, from a
@@ -1595,6 +1627,62 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         assert_eq!(*opened.borrow(), ["Call landlord", "Pay rent"]);
+    }
+
+    #[gpui_kit::test]
+    fn double_click_does_what_was_chosen(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            open(
+                options(),
+                "Reminders – Home",
+                Some(vec![reminder(soon, "Pay rent")]),
+                cx,
+            )
+            .unwrap()
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = Rc::clone(&events);
+            cx.subscribe(&view, move |_, event: &RemindersEvent, _| match event {
+                RemindersEvent::OpenTask(reminder) => {
+                    events
+                        .borrow_mut()
+                        .push(format!("open {}", reminder.task_id));
+                }
+                RemindersEvent::EditTask { task_id } => {
+                    events.borrow_mut().push(format!("edit {task_id}"));
+                }
+                RemindersEvent::SetDone { task_id, done } => {
+                    events.borrow_mut().push(format!("done {task_id} {done}"));
+                }
+                RemindersEvent::OpenInBrowser { task_id } => {
+                    events.borrow_mut().push(format!("browser {task_id}"));
+                }
+                _ => {}
+            })
+            .detach();
+        });
+        let double_click = |cx: &mut TestAppContext, action: DoubleClickAction| {
+            cx.update(|cx| view.update(cx, |view, _| view.set_double_click(action)));
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.double_click(("row", 0_usize), cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+
+        double_click(cx, DoubleClickAction::OpenDetails);
+        double_click(cx, DoubleClickAction::Edit);
+        double_click(cx, DoubleClickAction::ToggleDone);
+        double_click(cx, DoubleClickAction::OpenInBrowser);
+        assert_eq!(
+            *events.borrow(),
+            ["open 1", "edit 1", "done 1 true", "browser 1"]
+        );
     }
 
     #[gpui_kit::test]

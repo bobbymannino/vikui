@@ -5,6 +5,8 @@
 //! The window's details side panel is a [`ReminderDetailsView`], filled from the tasks
 //! loaded for the list. Marking a task done from the panel, the list or a task window
 //! saves it here. Tasks open in windows of their own through [`task_window`].
+//!
+//! Double-clicking a reminder does what the preferences say (opening its task by default).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -209,8 +211,12 @@ fn fill(
         on_session_expired,
     });
     // Every reminders and search window shares the layout the user last left one in.
-    let layout = crate::app_preferences::get(cx).tables.reminders;
-    view.update(cx, |view, cx| view.set_table_layout(&layout, cx));
+    let preferences = crate::app_preferences::get(cx);
+    let double_click = double_click_action(preferences.reminder_double_click);
+    view.update(cx, |view, cx| {
+        view.set_table_layout(&preferences.tables.reminders, cx);
+        view.set_double_click(double_click);
+    });
     load.run(cx);
     cx.subscribe(view, {
         let load = Rc::clone(&load);
@@ -230,6 +236,32 @@ fn fill(
         handle,
         view: view.downgrade(),
         load,
+    }
+}
+
+/// Make double-clicking a reminder in every open reminders and search window do `action`.
+pub fn set_double_click(action: preferences::DoubleClickAction, cx: &mut App) {
+    let action = double_click_action(action);
+    let views: Vec<Entity<RemindersView>> = cx
+        .try_global::<RemindersWindow>()
+        .into_iter()
+        .flat_map(|open| open.browse.iter().chain(&open.search))
+        .filter_map(|opened| opened.view.upgrade())
+        .collect();
+    for view in views {
+        view.update(cx, |view, _| view.set_double_click(action));
+    }
+}
+
+/// The list's double-click action for the saved `action`.
+fn double_click_action(action: preferences::DoubleClickAction) -> reminders_ui::DoubleClickAction {
+    match action {
+        preferences::DoubleClickAction::OpenDetails => reminders_ui::DoubleClickAction::OpenDetails,
+        preferences::DoubleClickAction::Edit => reminders_ui::DoubleClickAction::Edit,
+        preferences::DoubleClickAction::ToggleDone => reminders_ui::DoubleClickAction::ToggleDone,
+        preferences::DoubleClickAction::OpenInBrowser => {
+            reminders_ui::DoubleClickAction::OpenInBrowser
+        }
     }
 }
 
