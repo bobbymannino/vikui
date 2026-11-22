@@ -489,9 +489,12 @@ impl Render for NewReminderView {
                                 ),
                             )
                             .child(
-                                field().label("Notes").child(
-                                    Textarea::new(&self.body).h(px(88.)).aria_label("Notes"),
-                                ),
+                                field()
+                                    .label("Notes")
+                                    .description("Supports Markdown.")
+                                    .child(
+                                        Textarea::new(&self.body).h(px(88.)).aria_label("Notes"),
+                                    ),
                             )
                             .child(
                                 field().label("Due").child(
