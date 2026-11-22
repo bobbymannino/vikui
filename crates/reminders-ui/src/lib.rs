@@ -595,20 +595,22 @@ impl RemindersView {
         }
     }
 
-    fn on_toggle_done(&mut self, _: &ToggleDone, _: &mut Window, cx: &mut Context<Self>) {
-        let Some(reminder) = self
-            .table
-            .read(cx)
-            .selected_row()
-            .and_then(|row_ix| self.order_of(row_ix, cx))
+    fn toggle_done(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        if let Some(reminder) = self
+            .order_of(row_ix, cx)
             .and_then(|order| self.reminders.get(order))
-        else {
-            return;
-        };
-        cx.emit(RemindersEvent::SetDone {
-            task_id: reminder.task_id,
-            done: !reminder.task_done,
-        });
+        {
+            cx.emit(RemindersEvent::SetDone {
+                task_id: reminder.task_id,
+                done: !reminder.task_done,
+            });
+        }
+    }
+
+    fn on_toggle_done(&mut self, _: &ToggleDone, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(row_ix) = self.table.read(cx).selected_row() {
+            self.toggle_done(row_ix, cx);
+        }
     }
 
     /// Show why the reminders could not be loaded.
