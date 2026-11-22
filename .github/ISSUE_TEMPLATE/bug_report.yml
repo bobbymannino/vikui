@@ -1,0 +1,28 @@
+name: Bug report
+description: Something in Vikui doesn't work as it should.
+type: Bug
+assignees:
+  - bobbymannino
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: What went wrong?
+      description: >
+        What you did, what you expected and what happened instead. Reporting from
+        Vikui's Settings (About tab) fills in your OS and Vikui version.
+      value: |
+        **What happened**
+
+
+        **Steps to reproduce**
+        1.
+
+        **What I expected**
+
+
+        ---
+        OS:
+        Vikui version:
+    validations:
+      required: true
