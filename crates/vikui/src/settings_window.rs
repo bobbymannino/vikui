@@ -114,11 +114,18 @@ fn open_view(cx: &mut App) -> Option<(Opened, bool)> {
         return Some((opened, false));
     }
     let title = format!("Settings – {}", crate::APP_NAME);
-    let options = crate::window_options(title, 480., 560., cx);
+    let options = crate::app_windows::options(
+        crate::app_windows::WindowKind::Settings,
+        title,
+        480.,
+        560.,
+        cx,
+    );
     let check_on_open = crate::app_preferences::get(cx).check_for_updates_on_open;
     let (handle, view) = settings_ui::open(options, about(), check_on_open, theme_choices(cx), cx)
         .inspect_err(|err| log::error!("failed to open settings window: {err:#}"))
         .ok()?;
+    crate::app_windows::track(crate::app_windows::WindowKind::Settings, handle, cx);
     let opened = Opened {
         handle,
         view: view.downgrade(),
