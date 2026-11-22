@@ -18,7 +18,8 @@
 //! loads the reminders again and passes them to [`RemindersView::set_reminders`].
 //!
 //! The search field (Cmd/Ctrl+F) filters the list by task title, ignoring case, spaces
-//! and punctuation (see [`reminders::Search`]). Enter moves to the results; Escape clears.
+//! and punctuation, and by label with `*label` terms (see [`reminders::Search`]). Enter
+//! moves to the results; Escape clears.
 //! A search window ([`open_search`]) instead holds the server search the list shows:
 //! Enter reports [`RemindersEvent::Search`] and the caller lists the new results.
 //!
@@ -252,7 +253,7 @@ impl RemindersView {
 
         let search = cx.new(|cx| {
             InputState::new(window, cx)
-                .placeholder("Search reminders")
+                .placeholder("Search reminders, or *label")
                 .clean_on_escape()
         });
         let search_events = cx.subscribe_in(
@@ -383,7 +384,7 @@ impl RemindersView {
         self.loading = true;
         let text = SharedString::from(text.to_owned());
         self.search.update(cx, |search, cx| {
-            search.set_placeholder("Search all tasks", window, cx);
+            search.set_placeholder("Search all tasks, or *label", window, cx);
             search.set_value(text, window, cx);
         });
         cx.notify();
@@ -472,7 +473,9 @@ impl RemindersView {
         rows.retain(|row| {
             self.query.matches_normalized(&row.search_key)
                 && self.reminders.get(row.order).is_some_and(|reminder| {
-                    self.label_filter.matches(reminder) && self.status_filter.matches(reminder, now)
+                    self.query.matches_labels(&reminder.task_labels)
+                        && self.label_filter.matches(reminder)
+                        && self.status_filter.matches(reminder, now)
                 })
         });
         let mut summary = summary(set, upcoming, self.matched_tasks);
@@ -1342,6 +1345,28 @@ mod tests {
 
         search(cx, "PAY rent");
         assert_eq!(titles(cx), ["Pay-Rent!", "pay rent (flat 2)"]);
+        // `*label` terms filter by the task's labels.
+        cx.update(|cx| {
+            view.update(cx, |view, cx| {
+                let bills = reminders::TaskLabel {
+                    id: 4,
+                    title: "Bills".into(),
+                    rgb: None,
+                };
+                let mut reminders = view.reminders.clone();
+                if let Some(flat) = reminders.get_mut(2) {
+                    flat.task_labels = vec![bills];
+                }
+                view.set_reminders(&reminders, None, cx);
+            });
+        });
+        search(cx, "*bill");
+        assert_eq!(titles(cx), ["pay rent (flat 2)"]);
+        search(cx, "pay *\"bills\"");
+        assert_eq!(titles(cx), ["pay rent (flat 2)"]);
+        search(cx, "call *bills");
+        assert_eq!(titles(cx), Vec::<String>::new());
+        search(cx, "PAY rent");
         assert!(
             cx.update(|cx| view.read(cx).summary.ends_with("· 2 of 3 shown")),
             "summary counts shown rows"
