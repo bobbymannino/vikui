@@ -312,25 +312,96 @@ pub fn normalize(text: &str) -> String {
         .collect()
 }
 
-/// A search over reminder titles, ignoring case, spaces and punctuation.
+/// Search text split into its words and its labels: `*name` (as in Vikunja's quick add)
+/// or `*"two words"` asks for tasks with a label starting with that name.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SearchTerms {
+    /// The words that aren't labels, separated by single spaces.
+    pub text: String,
+    /// The label names asked for, as typed (without `*` or quotes); none are empty.
+    pub labels: Vec<String>,
+}
+
+impl SearchTerms {
+    #[must_use]
+    pub fn parse(query: &str) -> Self {
+        let mut words: Vec<&str> = Vec::new();
+        let mut labels = Vec::new();
+        let mut rest = query.trim_start();
+        while !rest.is_empty() {
+            let (term, after) = if let Some(quoted) = rest.strip_prefix("*\"") {
+                let end = quoted.find('"').unwrap_or(quoted.len());
+                let after = quoted.get(end + 1..).unwrap_or("");
+                (Some(&quoted[..end]), after)
+            } else {
+                let end = rest.find(char::is_whitespace).unwrap_or(rest.len());
+                let (word, after) = rest.split_at(end);
+                let label = word.strip_prefix('*');
+                if label.is_none() {
+                    words.push(word);
+                }
+                (label, after)
+            };
+            if let Some(label) = term.map(str::trim).filter(|label| !label.is_empty()) {
+                labels.push(label.to_owned());
+            }
+            rest = after.trim_start();
+        }
+        Self {
+            text: words.join(" "),
+            labels,
+        }
+    }
+
+    /// Whether `title`, a label's, is one these terms ask for.
+    #[must_use]
+    pub fn is_label_wanted(&self, title: &str) -> bool {
+        let title = normalize(title);
+        self.labels
+            .iter()
+            .any(|label| title.starts_with(&normalize(label)))
+    }
+}
+
+/// A search over reminder titles, ignoring case, spaces and punctuation, and over their
+/// task's labels with `*label` terms (see [`SearchTerms`]).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Search {
-    /// [`normalize`]d query; empty matches everything.
+    /// [`normalize`]d words; empty matches every title.
     query: String,
+    /// [`normalize`]d label names; a task needs a label starting with each.
+    labels: Vec<String>,
 }
 
 impl Search {
     #[must_use]
     pub fn new(query: &str) -> Self {
+        let terms = SearchTerms::parse(query);
         Self {
-            query: normalize(query),
+            query: normalize(&terms.text),
+            labels: terms
+                .labels
+                .iter()
+                .map(|label| normalize(label))
+                .filter(|label| !label.is_empty())
+                .collect(),
         }
     }
 
     /// Whether the query has anything left to match on; "" and "!?" do not.
     #[must_use]
     pub fn is_empty(&self) -> bool {
-        self.query.is_empty()
+        self.query.is_empty() && self.labels.is_empty()
+    }
+
+    /// Whether `labels`, a task's, include one starting with each label asked for.
+    #[must_use]
+    pub fn matches_labels(&self, labels: &[TaskLabel]) -> bool {
+        self.labels.iter().all(|wanted| {
+            labels
+                .iter()
+                .any(|label| normalize(&label.title).starts_with(wanted.as_str()))
+        })
     }
 
     /// Whether `key`, already [`normalize`]d, contains the query.
@@ -787,8 +858,46 @@ mod tests {
 
         let empty = Search::new("?!");
         assert!(empty.is_empty());
+        assert!(!Search::new("*work").is_empty());
         assert!(empty.matches("anything"));
         assert!(Search::default().matches(""));
+    }
+
+    #[test]
+    fn splits_labels_out_of_search_text() {
+        let terms = SearchTerms::parse("  pay *Bills rent *\"Next week\" *  ");
+        assert_eq!(terms.text, "pay rent");
+        assert_eq!(terms.labels, ["Bills", "Next week"]);
+        assert_eq!(SearchTerms::parse("*\"open").labels, ["open"]);
+        assert_eq!(
+            SearchTerms::parse("2*3"),
+            SearchTerms {
+                text: "2*3".into(),
+                labels: Vec::new(),
+            }
+        );
+        assert!(terms.is_label_wanted("bills-2026"));
+        assert!(terms.is_label_wanted("NEXT WEEK"));
+        assert!(!terms.is_label_wanted("Work"));
+    }
+
+    #[test]
+    fn searches_by_label() {
+        let label = |title: &str| TaskLabel {
+            id: 1,
+            title: title.into(),
+            rgb: None,
+        };
+        let both = [label("Work"), label("Urgent!")];
+        let search = Search::new("*work *urg");
+        assert!(search.matches_labels(&both));
+        assert!(!search.matches_labels(&both[..1]), "every label is needed");
+        assert!(search.matches(""), "no words: any title");
+        assert!(
+            Search::new("rent").matches_labels(&[]),
+            "no labels asked for"
+        );
+        assert!(!Search::new("*home").matches_labels(&both));
     }
 
     #[test]
