@@ -24,9 +24,9 @@
 //! overdue ones (see [`reminders::StatusFilter`]), and one chip per label on the listed
 //! tasks filters to tasks with every selected label (see [`reminders::LabelFilter`]).
 //!
-//! Pressing T (as in Vikunja's web app) reports [`RemindersEvent::SetDone`] for the
-//! selected row's task; the caller saves it and answers with
-//! [`RemindersView::set_task_done`].
+//! Pressing T (as in Vikunja's web app), or picking "Mark as done" from a row's context
+//! menu, reports [`RemindersEvent::SetDone`] for that row's task; the caller saves it
+//! and answers with [`RemindersView::set_task_done`].
 
 mod label_tag;
 mod reminders_table;
@@ -205,6 +205,7 @@ impl RemindersView {
                         RowCommand::OpenInWindow => this.open_task(row_ix, cx),
                         RowCommand::OpenInBrowser => this.open_in_browser(row_ix, cx),
                         RowCommand::Edit => this.edit_task(row_ix, cx),
+                        RowCommand::ToggleDone => this.toggle_done(row_ix, cx),
                     })
                     .ok();
                 }));
@@ -1624,6 +1625,9 @@ mod tests {
                 RemindersEvent::OpenInBrowser { task_id } => {
                     events.borrow_mut().push(format!("browser {task_id}"));
                 }
+                RemindersEvent::SetDone { task_id, done } => {
+                    events.borrow_mut().push(format!("done {task_id} {done}"));
+                }
                 _ => {}
             })
             .detach();
@@ -1643,11 +1647,25 @@ mod tests {
             .unwrap();
             cx.run_until_parked();
         };
-        // The menu's items, by index: Edit…, a separator, then the two open items.
+        // The menu's items, by index: Edit…, the done toggle, a separator, then the two
+        // open items.
         pick(cx, "Edit…", 0);
-        pick(cx, "Open in new window", 2);
-        pick(cx, "Open in browser", 3);
-        assert_eq!(*events.borrow(), ["edit 2", "window 2", "browser 2"]);
+        pick(cx, "Mark as done", 1);
+        pick(cx, "Open in new window", 3);
+        pick(cx, "Open in browser", 4);
+        assert_eq!(
+            *events.borrow(),
+            ["edit 2", "done 2 true", "window 2", "browser 2"]
+        );
+
+        // Once saved, the item offers to undo it.
+        cx.update(|cx| view.update(cx, |view, cx| view.set_task_done(2, true, cx)));
+        pick(cx, "Mark as not done", 1);
+        assert_eq!(
+            events.borrow().last().map(String::as_str),
+            Some("done 2 false")
+        );
+        events.borrow_mut().clear();
 
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
@@ -1661,10 +1679,7 @@ mod tests {
         })
         .unwrap();
         cx.run_until_parked();
-        assert_eq!(
-            *events.borrow(),
-            ["edit 2", "window 2", "browser 2", "browser 1", "edit 1"]
-        );
+        assert_eq!(*events.borrow(), ["browser 1", "edit 1"]);
     }
 
     /// The chips are kit buttons so they draw the focus ring; they must still be reachable
