@@ -120,6 +120,35 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
     );
 }
 
+/// Bring the main window, which lists the projects, to the front, or reopen it if it was
+/// closed. Signed out, the sign-in window stands in for it.
+fn open_projects(cx: &mut App) {
+    // Deferred: a key binding's action runs while GPUI is still updating the window it
+    // was pressed in, and bringing a window to the front from inside would fail.
+    cx.defer(|cx| {
+        let signed_in = app_session::get(cx);
+        let kind = if signed_in.is_some() {
+            WindowKind::Main
+        } else {
+            WindowKind::Login
+        };
+        if let Some(handle) = app_windows::find(kind, cx)
+            && handle
+                .update(cx, |_, window, _| window.activate_window())
+                .is_ok()
+        {
+            return;
+        }
+        match signed_in {
+            Some(signed_in) => open_main_window(signed_in, cx),
+            None => {
+                open_login(Prompt::default(), cx);
+            }
+        }
+        cx.activate(true);
+    });
+}
+
 /// Open the main window, listing the projects of the signed-in session.
 fn open_main_window(signed_in: app_session::SignedIn, cx: &mut App) {
     let options = app_windows::options(WindowKind::Main, APP_NAME, 960., 640., cx);
