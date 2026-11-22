@@ -121,16 +121,24 @@ pub enum DoubleClickAction {
     Edit,
     /// Mark its task done, or not done if it is.
     ToggleDone,
+    /// Open its task's page in the web browser.
+    OpenInBrowser,
 }
 
 impl DoubleClickAction {
-    pub const ALL: [Self; 3] = [Self::OpenDetails, Self::Edit, Self::ToggleDone];
+    pub const ALL: [Self; 4] = [
+        Self::OpenDetails,
+        Self::Edit,
+        Self::ToggleDone,
+        Self::OpenInBrowser,
+    ];
 
     fn label(self) -> &'static str {
         match self {
             Self::OpenDetails => "Open details in a new window",
             Self::Edit => "Edit the task",
             Self::ToggleDone => "Mark as done or not done",
+            Self::OpenInBrowser => "Open in browser",
         }
     }
 }
@@ -941,6 +949,7 @@ mod tests {
             window.find_by_label("Open details in a new window");
             window.find_by_label("Edit the task");
             window.find_by_label("Mark as done or not done");
+            window.find_by_label("Open in browser");
         })
         .unwrap();
         assert_eq!(checked(cx, 1), Some(true));

@@ -259,6 +259,9 @@ fn double_click_action(action: preferences::DoubleClickAction) -> reminders_ui::
         preferences::DoubleClickAction::OpenDetails => reminders_ui::DoubleClickAction::OpenDetails,
         preferences::DoubleClickAction::Edit => reminders_ui::DoubleClickAction::Edit,
         preferences::DoubleClickAction::ToggleDone => reminders_ui::DoubleClickAction::ToggleDone,
+        preferences::DoubleClickAction::OpenInBrowser => {
+            reminders_ui::DoubleClickAction::OpenInBrowser
+        }
     }
 }
 

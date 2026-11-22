@@ -142,6 +142,7 @@ fn open_view(cx: &mut App) -> Option<(Opened, bool)> {
         DoubleClickAction::OpenDetails => settings_ui::DoubleClickAction::OpenDetails,
         DoubleClickAction::Edit => settings_ui::DoubleClickAction::Edit,
         DoubleClickAction::ToggleDone => settings_ui::DoubleClickAction::ToggleDone,
+        DoubleClickAction::OpenInBrowser => settings_ui::DoubleClickAction::OpenInBrowser,
     };
     view.update(cx, |view, cx| {
         view.set_reminder_double_click(double_click, cx);
@@ -203,6 +204,9 @@ impl Updates {
                     settings_ui::DoubleClickAction::OpenDetails => DoubleClickAction::OpenDetails,
                     settings_ui::DoubleClickAction::Edit => DoubleClickAction::Edit,
                     settings_ui::DoubleClickAction::ToggleDone => DoubleClickAction::ToggleDone,
+                    settings_ui::DoubleClickAction::OpenInBrowser => {
+                        DoubleClickAction::OpenInBrowser
+                    }
                 };
                 crate::app_preferences::update(cx, |preferences| {
                     preferences.reminder_double_click = action;

@@ -79,6 +79,8 @@ pub enum DoubleClickAction {
     Edit,
     /// Mark the task done, or not done if it is.
     ToggleDone,
+    /// Open the task's page in the web browser.
+    OpenInBrowser,
 }
 
 /// A window's frame, in logical pixels in the desktop's coordinates (which can be
@@ -293,6 +295,11 @@ mod tests {
             fs::read_to_string(&path)
                 .unwrap()
                 .contains("\"reminder_double_click\": \"toggle-done\"")
+        );
+        fs::write(&path, r#"{"reminder_double_click": "open-in-browser"}"#).unwrap();
+        assert_eq!(
+            Preferences::load_from(&path).reminder_double_click,
+            DoubleClickAction::OpenInBrowser
         );
     }
 }
