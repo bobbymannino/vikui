@@ -9,8 +9,8 @@ use std::collections::BTreeSet;
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use vikunja::{
-    Client, Error, Project, ProjectKind, RelativeReminder, RelativeTo, Repeat, Task, TaskQuery,
-    Token,
+    Client, Error, Label, Project, ProjectKind, RelativeReminder, RelativeTo, Repeat, Task,
+    TaskQuery, Token,
 };
 
 /// One reminder, flattened out of its task, or a task that has no reminder set.
@@ -541,12 +541,24 @@ impl Source {
     }
 
     /// Fetch the tasks this source covers. Blocks; run it on a background task.
+    ///
+    /// A search with `*label` terms (see [`SearchTerms`]) lists only tasks with a label
+    /// starting with each, and none if no label does.
     pub fn tasks(&self, client: &Client, token: &Token) -> Result<Vec<Task>, Error> {
         let query = match self.direct_query() {
             Some(query) => query,
             None => match self {
                 Self::SavedFilter { filter_id, .. } => {
                     client.saved_filter(token, *filter_id)?.query()
+                }
+                Self::Search(text) => {
+                    let terms = SearchTerms::parse(text);
+                    let Some(query) = label_search(&terms, &client.labels(token)?) else {
+                        return Ok(Vec::new());
+                    };
+                    let mut tasks = client.tasks(token, &query)?;
+                    tasks.retain(|task| has_wanted_labels(&terms, task));
+                    return Ok(tasks);
                 }
                 _ => TaskQuery::default(),
             },
@@ -567,9 +579,57 @@ impl Source {
             }
             Self::SavedFilter { .. } => None,
             Self::Filter(filter) => Some(TaskQuery::filter(filter.clone())),
-            Self::Search(text) => Some(TaskQuery::search(text.clone())),
+            Self::Search(text) => {
+                let terms = SearchTerms::parse(text);
+                terms
+                    .labels
+                    .is_empty()
+                    .then(|| TaskQuery::search(terms.text))
+            }
         }
     }
+}
+
+/// The query for a search with labels, given every label there is: its words, and any of
+/// the labels asked for. `None` when some label asked for matches no label, so no task
+/// can match.
+fn label_search(terms: &SearchTerms, labels: &[Label]) -> Option<TaskQuery> {
+    let mut ids = BTreeSet::new();
+    for wanted in &terms.labels {
+        let one = SearchTerms {
+            labels: vec![wanted.clone()],
+            ..SearchTerms::default()
+        };
+        let matching: Vec<i64> = labels
+            .iter()
+            .filter(|label| one.is_label_wanted(&label.title))
+            .map(|label| label.id)
+            .collect();
+        if matching.is_empty() {
+            return None;
+        }
+        ids.extend(matching);
+    }
+    let ids: Vec<String> = ids.iter().map(ToString::to_string).collect();
+    Some(TaskQuery {
+        filter: Some(format!("labels in {}", ids.join(","))),
+        search: Some(terms.text.clone()).filter(|text| !text.is_empty()),
+        ..TaskQuery::default()
+    })
+}
+
+/// Whether `task` has a label starting with each one `terms` asks for (the server's
+/// `labels in` matches any of them).
+fn has_wanted_labels(terms: &SearchTerms, task: &Task) -> bool {
+    terms.labels.iter().all(|wanted| {
+        let one = SearchTerms {
+            labels: vec![wanted.clone()],
+            ..SearchTerms::default()
+        };
+        task.labels
+            .iter()
+            .any(|label| one.is_label_wanted(&label.title))
+    })
 }
 
 /// Give each of `reminders` without a colour of its own its project's, from `projects`.
@@ -808,12 +868,12 @@ mod tests {
         let tasks = [Task {
             priority: 4,
             labels: vec![
-                vikunja::Label {
+                Label {
                     id: 1,
                     title: "Bills".into(),
                     hex_color: "ff0000".into(),
                 },
-                vikunja::Label {
+                Label {
                     id: 2,
                     title: "Home".into(),
                     hex_color: String::new(),
@@ -948,12 +1008,50 @@ mod tests {
                 .and_then(|query| query.search),
             Some("rent".to_owned())
         );
+        assert_eq!(
+            Source::Search("rent *bills".into()).direct_query(),
+            None,
+            "labels need the server's"
+        );
         let saved = Source::SavedFilter {
             filter_id: 2,
             title: "This week".into(),
         };
         assert_eq!(saved.title(), "Reminders – This week");
         assert_eq!(saved.direct_query(), None);
+    }
+
+    #[test]
+    fn searches_every_project_by_label() {
+        let label = |id, title: &str| Label {
+            id,
+            title: title.into(),
+            ..Label::default()
+        };
+        let labels = [label(1, "Bills"), label(2, "Bills 2026"), label(3, "Work")];
+        let terms = SearchTerms::parse("rent *bills *work");
+        let query = label_search(&terms, &labels).expect("every label matches");
+        assert_eq!(query.filter.as_deref(), Some("labels in 1,2,3"));
+        assert_eq!(query.search.as_deref(), Some("rent"));
+        assert_eq!(
+            label_search(&SearchTerms::parse("*work"), &labels).and_then(|q| q.search),
+            None
+        );
+        assert_eq!(label_search(&SearchTerms::parse("*home"), &labels), None);
+
+        let task = |ids: &[i64]| Task {
+            labels: labels
+                .iter()
+                .filter(|l| ids.contains(&l.id))
+                .cloned()
+                .collect(),
+            ..Task::default()
+        };
+        assert!(has_wanted_labels(&terms, &task(&[2, 3])));
+        assert!(
+            !has_wanted_labels(&terms, &task(&[1])),
+            "needs a match for each"
+        );
     }
 
     fn label(id: i64, title: &str) -> TaskLabel {
