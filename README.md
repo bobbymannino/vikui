@@ -79,17 +79,18 @@ libfontconfig-dev libfreetype-dev pkg-config`).
 
 ## Updating
 
-Vikui checks [Releases](../../releases) when it opens and shows **Settings** if a newer
-version is out; opening **Settings** (`Mod+,`) checks too. Turn off **Check for updates on
-open** in Settings to check only when you choose **Check for Updates…** from the Vikui
-menu or the button in Settings. Click **Update to <version> and Restart**: Vikui
-downloads it, checks its SHA-256 checksum, replaces itself and relaunches. Prereleases
-are never offered.
+Vikui checks [Releases](../../releases) when it opens and shows the **Updates** tab of
+**Settings** if a newer version is out; opening **Settings** (`Mod+,`) checks too. Turn
+off **Check for updates on open** under **Updates** to check only when you choose **Check
+for Updates…** from the Vikui menu or the button there. Click **Update to <version> and
+Restart**: Vikui downloads it, checks its SHA-256 checksum, replaces itself and
+relaunches. Prereleases are never offered.
 
-Pick an appearance in **Settings**: **Light**, **Dark** or **Auto**, which follows the
-system as it switches. Pick the theme shown while light and the one shown while dark from
-the themes GPUI Kit publishes (Solarized, Catppuccin, Gruvbox, Tokyo Night and more),
-bundled from its repository under the Apache 2.0 licence (`crates/vikui/themes`).
+Pick an appearance on the **Appearance** tab of **Settings**: **Light**, **Dark** or
+**Auto**, which follows the system as it switches. Pick the theme shown while light and
+the one shown while dark from the themes GPUI Kit publishes (Solarized, Catppuccin,
+Gruvbox, Tokyo Night and more), bundled from its repository under the Apache 2.0 licence
+(`crates/vikui/themes`).
 
 Preferences are saved in `preferences.json` in `~/Library/Application Support/vikui` on
 macOS, `~/.config/vikui` on Linux and `%APPDATA%\vikui` on Windows. They include how you
