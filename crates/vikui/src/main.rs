@@ -99,30 +99,40 @@ fn open_login(prompt: Prompt, cx: &mut App) -> Option<AnyWindowHandle> {
 }
 
 fn open_overview(credentials: Credentials, cx: &mut App) {
-    let options = app_windows::options(WindowKind::Main, APP_NAME, 960., 640., cx);
     let session = Arc::new(Session::new(credentials));
+    // Every window of this session reports expiry here; only the first one signs out.
+    let signed_out = Rc::new(Cell::new(false));
+    let on_session_expired: app_session::OnSessionExpired = Rc::new({
+        let session = Arc::clone(&session);
+        move |cx| {
+            if !signed_out.replace(true) {
+                sign_out(&session, cx);
+            }
+        }
+    });
+    app_session::set(Arc::clone(&session), Rc::clone(&on_session_expired), cx);
+    open_main_window(
+        app_session::SignedIn {
+            session,
+            on_session_expired,
+        },
+        cx,
+    );
+}
+
+/// Open the main window, listing the projects of the signed-in session.
+fn open_main_window(signed_in: app_session::SignedIn, cx: &mut App) {
+    let options = app_windows::options(WindowKind::Main, APP_NAME, 960., 640., cx);
+    let app_session::SignedIn {
+        session,
+        on_session_expired: expire,
+    } = signed_in;
     let load_projects: LoadProjects = {
         let session = Arc::clone(&session);
         Arc::new(move || session.call(vikunja::Client::projects))
     };
-    // Every window of this session reports expiry here; only the first one signs out.
-    let signed_out = Rc::new(Cell::new(false));
-    let expire = move |session: &Session, cx: &mut App| {
-        if !signed_out.replace(true) {
-            sign_out(session, cx);
-        }
-    };
-    app_session::set(
-        Arc::clone(&session),
-        Rc::new({
-            let expire = expire.clone();
-            let session = Arc::clone(&session);
-            move |cx| expire(&session, cx)
-        }),
-        cx,
-    );
     let search_session = Arc::clone(&session);
-    let search_expire = expire.clone();
+    let search_expire = Rc::clone(&expire);
     let result = overview_ui::open(options, cx, move |window, cx| {
         let view = cx.new(|cx| {
             let mut view = ProjectsView::new(load_projects, window, cx);
@@ -132,7 +142,7 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
         });
         cx.subscribe(&view, move |_, event, cx| {
             let source = match event {
-                ProjectsEvent::SessionExpired => return expire(&session, cx),
+                ProjectsEvent::SessionExpired => return expire(cx),
                 ProjectsEvent::Loaded(projects) => return projects_menu::set(projects, cx),
                 ProjectsEvent::TableLayoutChanged(layout) => {
                     let layout = layout.clone();
@@ -154,14 +164,8 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
                     title: title.to_string(),
                 },
             };
-            let expire = expire.clone();
-            let expired_session = Arc::clone(&session);
-            reminders_window::open(
-                &source,
-                Arc::clone(&session),
-                move |cx| expire(&expired_session, cx),
-                cx,
-            );
+            let expire = Rc::clone(&expire);
+            reminders_window::open(&source, Arc::clone(&session), move |cx| expire(cx), cx);
         })
         .detach();
         view.into()
@@ -171,12 +175,11 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
             app_windows::track(WindowKind::Main, handle, cx);
             cx.subscribe(&overview, move |_, event, cx| match event {
                 OverviewEvent::Search(text) => {
-                    let expire = search_expire.clone();
-                    let session = Arc::clone(&search_session);
+                    let expire = Rc::clone(&search_expire);
                     reminders_window::open_search(
                         text,
                         Arc::clone(&search_session),
-                        move |cx| expire(&session, cx),
+                        move |cx| expire(cx),
                         cx,
                     );
                 }
