@@ -119,6 +119,37 @@ pub fn open(
     cx.default_global::<RemindersWindow>().browse.push(opened);
 }
 
+/// Bring the search window forward with the cursor in its search field, opening it
+/// empty (waiting for a search) if it isn't open. Does nothing while signed out.
+pub fn show_search(cx: &mut App) {
+    // Deferred: a key binding's action runs while GPUI is still updating the window it
+    // was pressed in, and bringing a window to the front from inside would fail.
+    cx.defer(|cx| {
+        if open_search_view(cx).is_none() {
+            let Some(signed_in) = crate::app_session::get(cx) else {
+                return;
+            };
+            let expire = signed_in.on_session_expired;
+            open_search("", signed_in.session, move |cx| expire(cx), cx);
+        }
+        if let Some((handle, view)) = open_search_view(cx) {
+            handle
+                .update(cx, |_, window, cx| {
+                    window.activate_window();
+                    view.update(cx, |view, cx| view.focus_search(window, cx));
+                })
+                .inspect_err(|err| log::warn!("couldn't focus the search window: {err:#}"))
+                .ok();
+        }
+    });
+}
+
+/// The open search window and its view.
+fn open_search_view(cx: &App) -> Option<(AnyWindowHandle, Entity<RemindersView>)> {
+    let opened = cx.try_global::<RemindersWindow>()?.search.as_ref()?;
+    Some((opened.handle, opened.view.upgrade()?))
+}
+
 /// Show the tasks matching `text` in every project in the search window, opening it if
 /// needed.
 ///
