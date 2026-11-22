@@ -26,6 +26,8 @@ pub struct Preferences {
     pub check_for_updates_on_open: bool,
     /// The colour themes and whether to follow the system's light or dark appearance.
     pub theme: ThemePreferences,
+    /// What double-clicking a reminder does.
+    pub reminder_double_click: DoubleClickAction,
     /// How the user last arranged each table.
     pub tables: Tables,
     /// Where each kind of window was last, by a stable name such as `"main"`.
@@ -37,6 +39,7 @@ impl Default for Preferences {
         Self {
             check_for_updates_on_open: true,
             theme: ThemePreferences::default(),
+            reminder_double_click: DoubleClickAction::default(),
             tables: Tables::default(),
             windows: BTreeMap::new(),
         }
@@ -63,6 +66,19 @@ pub enum Appearance {
     /// Follow the system's appearance as it changes.
     #[default]
     Auto,
+}
+
+/// What double-clicking a reminder does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum DoubleClickAction {
+    /// Open the reminder's task in a window of its own.
+    #[default]
+    OpenDetails,
+    /// Edit the task.
+    Edit,
+    /// Mark the task done, or not done if it is.
+    ToggleDone,
 }
 
 /// A window's frame, in logical pixels in the desktop's coordinates (which can be
@@ -257,5 +273,26 @@ mod tests {
         if let Some(path) = Preferences::path() {
             assert!(path.ends_with(Path::new(FOLDER).join(FILE)));
         }
+    }
+
+    #[test]
+    fn saves_and_loads_the_double_click_action() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        assert_eq!(
+            Preferences::default().reminder_double_click,
+            DoubleClickAction::OpenDetails
+        );
+        let preferences = Preferences {
+            reminder_double_click: DoubleClickAction::ToggleDone,
+            ..Preferences::default()
+        };
+        preferences.save_to(&path).unwrap();
+        assert_eq!(Preferences::load_from(&path), preferences);
+        assert!(
+            fs::read_to_string(&path)
+                .unwrap()
+                .contains("\"reminder_double_click\": \"toggle-done\"")
+        );
     }
 }
