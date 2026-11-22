@@ -158,15 +158,17 @@ fn overlap(frame: &Bounds<Pixels>, display: &Bounds<Pixels>) -> f32 {
 
 /// Save where the `kind` window `window` now is, unless it is already saved there.
 fn record(kind: WindowKind, window: &Window, cx: &mut App) {
-    let (bounds, maximized) = match window.window_bounds() {
-        WindowBounds::Windowed(bounds) | WindowBounds::Fullscreen(bounds) => (bounds, false),
-        WindowBounds::Maximized(bounds) => (bounds, true),
+    let (bounds, maximized, fullscreen) = match window.window_bounds() {
+        WindowBounds::Windowed(bounds) => (bounds, false, false),
+        WindowBounds::Maximized(bounds) => (bounds, true, false),
+        WindowBounds::Fullscreen(bounds) => (bounds, false, true),
     };
+    let size = reopen_size(window, bounds.size, fullscreen);
     let placement = WindowPlacement {
         x: whole(bounds.origin.x),
         y: whole(bounds.origin.y),
-        width: whole(bounds.size.width).unsigned_abs(),
-        height: whole(bounds.size.height).unsigned_abs(),
+        width: whole(size.width).unsigned_abs(),
+        height: whole(size.height).unsigned_abs(),
         maximized,
     };
     if crate::app_preferences::get(cx).windows.get(kind.key()) == Some(&placement) {
@@ -175,6 +177,23 @@ fn record(kind: WindowKind, window: &Window, cx: &mut App) {
     crate::app_preferences::update_soon(cx, |preferences| {
         preferences.windows.insert(kind.key().to_owned(), placement);
     });
+}
+
+/// The size to save so the window reopens at the size it is now.
+///
+/// On macOS GPUI reports a window's frame, titlebar included, but opens a window with
+/// that size as its content, so saving the frame would grow the window by its titlebar
+/// every time it reopened; save the content size instead. A full-screen window has no
+/// titlebar to measure, so its restore frame is kept. Windows and Linux report and open
+/// windows by the same size.
+fn reopen_size(window: &Window, frame: Size<Pixels>, fullscreen: bool) -> Size<Pixels> {
+    #[cfg(target_os = "macos")]
+    if !fullscreen {
+        return window.viewport_size();
+    }
+    #[cfg(not(target_os = "macos"))]
+    let _ = (window, fullscreen);
+    frame
 }
 
 /// Rounded to whole logical pixels.
@@ -306,25 +325,29 @@ mod tests {
         cx.update_window(handle, |_, window, cx| window.bounds_changed(cx))
             .unwrap();
         cx.run_until_parked();
-        let (saved, bounds) = cx
+        let (saved, bounds, reopen) = cx
             .update_window(handle, |_, window, cx| {
                 let saved = crate::app_preferences::get(cx)
                     .windows
                     .get("settings")
                     .copied();
-                (saved, window.window_bounds().get_bounds())
+                let bounds = window.window_bounds().get_bounds();
+                (saved, bounds, reopen_size(window, bounds.size, false))
             })
             .unwrap();
         let saved = saved.expect("the settings window's frame is saved");
-        assert_eq!(saved.width, whole(bounds.size.width).unsigned_abs());
         assert_eq!(saved.x, whole(bounds.origin.x));
+        assert_eq!(saved.y, whole(bounds.origin.y));
+        // Saved at the size it reopens at: its content size on macOS.
+        assert_eq!(saved.width, whole(reopen.width).unsigned_abs());
+        assert_eq!(saved.height, whole(reopen.height).unsigned_abs());
 
         // The next settings window opens there, offset from the one still open.
         let next = cx.update(|cx| options(WindowKind::Settings, "Settings", 480., 560., cx));
         let Some(WindowBounds::Windowed(next)) = next.window_bounds else {
             panic!("expected a windowed frame");
         };
-        assert_eq!(next.size.width, bounds.size.width);
+        assert_eq!(next.size, reopen);
     }
 
     #[test]
