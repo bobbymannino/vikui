@@ -40,6 +40,8 @@ pub struct ReminderRow {
     /// Fired already, not scheduled, or its task is done: drawn muted (the details panel
     /// says which). Tasks without a reminder are not muted unless done.
     pub inactive: bool,
+    /// Its task is done: the context menu offers to mark it not done.
+    pub done: bool,
     /// A real reminder, not a task listed without one.
     pub is_set: bool,
     /// Index into the reminders the rows were made from; stable across sorting.
@@ -64,6 +66,7 @@ impl ReminderRow {
                 label_tags: reminder.task_labels.iter().map(LabelTag::new).collect(),
                 search_key: reminders::normalize(&reminder.task_title),
                 inactive: reminder.status(now).is_inactive(),
+                done: reminder.task_done,
                 is_set: reminder.is_set,
                 order,
             })
@@ -139,6 +142,7 @@ pub type OnRowClick = Rc<dyn Fn(usize, &mut Window, &mut App)>;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum RowCommand {
     Edit,
+    ToggleDone,
     OpenInWindow,
     OpenInBrowser,
 }
@@ -365,6 +369,11 @@ impl TableDelegate for RemindersTable {
         let Some(on_command) = self.on_row_command.clone() else {
             return menu;
         };
+        let done_label = if self.rows.get(row_ix).is_some_and(|row| row.done) {
+            "Mark as not done"
+        } else {
+            "Mark as done"
+        };
         let item = |label: &'static str, icon: Option<IconName>, command: RowCommand| {
             let on_command = Rc::clone(&on_command);
             PopupMenuItem::new(label)
@@ -372,6 +381,11 @@ impl TableDelegate for RemindersTable {
                 .on_click(move |_, window, cx| on_command(row_ix, command, window, cx))
         };
         menu.item(item("Edit…", None, RowCommand::Edit))
+            .item(item(
+                done_label,
+                Some(IconName::Check),
+                RowCommand::ToggleDone,
+            ))
             .separator()
             .item(item(
                 "Open in new window",
