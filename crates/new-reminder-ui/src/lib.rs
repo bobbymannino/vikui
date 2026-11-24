@@ -388,6 +388,28 @@ impl NewReminderView {
     }
 }
 
+impl NewReminderView {
+    /// The notes field, laid out like a form field: its label, the box and a hint.
+    fn render_notes(&self, cx: &App) -> impl IntoElement {
+        v_flex()
+            .id("new-reminder-notes")
+            .gap_0p5()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child("Notes"),
+            )
+            .child(Textarea::new(&self.body).h(px(160.)).aria_label("Notes"))
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Supports Markdown."),
+            )
+    }
+}
+
 /// The repeat select's items; each one's id is its index in `choices`.
 fn repeat_items(choices: &[RepeatChoice]) -> Vec<Choice> {
     choices
@@ -480,65 +502,66 @@ impl Render for NewReminderView {
                     .p_1()
                     .overflow_y_scroll()
                     .child(
-                        v_form()
+                        // The notes sit between two forms rather than in one: a form lays
+                        // its fields out in a grid, which can't give one field more room.
+                        v_flex()
+                            .gap_2()
                             .child(
-                                field().label("Title").required(true).child(
-                                    Input::new(&self.title)
-                                        .id("new-reminder-title")
-                                        .aria_label("Title"),
-                                ),
-                            )
-                            .child(
-                                field()
-                                    .label("Notes")
-                                    .description("Supports Markdown.")
-                                    .child(
-                                        Textarea::new(&self.body).h(px(160.)).aria_label("Notes"),
+                                v_form().child(
+                                    field().label("Title").required(true).child(
+                                        Input::new(&self.title)
+                                            .id("new-reminder-title")
+                                            .aria_label("Title"),
                                     ),
-                            )
-                            .child(
-                                field().label("Due").child(
-                                    // The picker has no accessible name of its own.
-                                    div()
-                                        .id("new-reminder-due")
-                                        .role(Role::Group)
-                                        .aria_label("Due date")
-                                        .child(
-                                            DatePicker::new(&self.due)
-                                                .placeholder("No due date")
-                                                .cleanable(true),
-                                        )
-                                        .test_support(),
                                 ),
                             )
+                            .child(self.render_notes(cx))
                             .child(
-                                field().label("Priority").child(
-                                    Select::new(&self.priority)
-                                        .id("new-reminder-priority")
-                                        .accessibility_label("Priority"),
-                                ),
-                            )
-                            .child(
-                                field().label("Repeat").child(
-                                    Select::new(&self.repeat)
-                                        .id("new-reminder-repeat")
-                                        .accessibility_label("Repeat"),
-                                ),
-                            )
-                            .child(
-                                field().label("Project").required(true).child(
-                                    Select::new(&self.project)
-                                        .id("new-reminder-project")
-                                        .accessibility_label("Project")
-                                        .placeholder(if ready {
-                                            "Choose a project"
-                                        } else {
-                                            "Loading…"
-                                        })
-                                        .disabled(!ready),
-                                ),
-                            )
-                            .child(field().label("Labels").child(labels)),
+                                v_form()
+                                    .child(
+                                        field().label("Due").child(
+                                            // The picker has no accessible name of its own.
+                                            div()
+                                                .id("new-reminder-due")
+                                                .role(Role::Group)
+                                                .aria_label("Due date")
+                                                .child(
+                                                    DatePicker::new(&self.due)
+                                                        .placeholder("No due date")
+                                                        .cleanable(true),
+                                                )
+                                                .test_support(),
+                                        ),
+                                    )
+                                    .child(
+                                        field().label("Priority").child(
+                                            Select::new(&self.priority)
+                                                .id("new-reminder-priority")
+                                                .accessibility_label("Priority"),
+                                        ),
+                                    )
+                                    .child(
+                                        field().label("Repeat").child(
+                                            Select::new(&self.repeat)
+                                                .id("new-reminder-repeat")
+                                                .accessibility_label("Repeat"),
+                                        ),
+                                    )
+                                    .child(
+                                        field().label("Project").required(true).child(
+                                            Select::new(&self.project)
+                                                .id("new-reminder-project")
+                                                .accessibility_label("Project")
+                                                .placeholder(if ready {
+                                                    "Choose a project"
+                                                } else {
+                                                    "Loading…"
+                                                })
+                                                .disabled(!ready),
+                                        ),
+                                    )
+                                    .child(field().label("Labels").child(labels)),
+                            ),
                     ),
             )
             .child(
