@@ -103,6 +103,8 @@ pub struct ProjectEditorView {
     error: Option<SharedString>,
     /// Said after a save, until the form changes.
     status: Option<SharedString>,
+    /// Asked to open before the projects loaded; opened once they do.
+    pending_edit: Option<i64>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -151,6 +153,7 @@ impl ProjectEditorView {
             saving: false,
             error: None,
             status: None,
+            pending_edit: None,
             _subscriptions: subscriptions,
         }
     }
@@ -175,7 +178,23 @@ impl ProjectEditorView {
             }
             Editing::Project(_) | Editing::New => self.new_project(window, cx),
         }
+        if let Some(project_id) = self.pending_edit.take() {
+            self.edit(project_id, window, cx);
+        }
         cx.notify();
+    }
+
+    /// Open `project_id` in the form, e.g. from the projects table's context menu; if
+    /// the projects haven't loaded yet, once they do. Does nothing while a save runs.
+    pub fn show_project(&mut self, project_id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
+        if self.loading {
+            self.pending_edit = Some(project_id);
+        } else {
+            self.edit(project_id, window, cx);
+        }
     }
 
     /// Show why the projects couldn't be loaded.
@@ -881,6 +900,28 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         assert_eq!(cx.update(|cx| view.read(cx).editing()), None);
+    }
+
+    #[gpui_kit::test]
+    fn shows_a_project_asked_for_before_or_after_loading(cx: &mut TestAppContext) {
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            open(WindowOptions::default(), cx).unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| view.show_project(2, window, cx));
+            view.update(cx, |view, cx| view.set_projects(projects(), window, cx));
+        })
+        .unwrap();
+        assert_eq!(cx.update(|cx| view.read(cx).editing()), Some(2));
+        assert_eq!(cx.update(|cx| view.read(cx).draft(cx).title), "Garden");
+
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| view.show_project(3, window, cx));
+        })
+        .unwrap();
+        assert_eq!(cx.update(|cx| view.read(cx).editing()), Some(3));
     }
 
     #[gpui_kit::test]

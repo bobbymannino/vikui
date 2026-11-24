@@ -81,6 +81,8 @@ pub struct FilterEditorView {
     error: Option<SharedString>,
     /// Said after a save, until the form changes.
     status: Option<SharedString>,
+    /// Asked to open before the filters loaded; opened once they do.
+    pending_edit: Option<i64>,
     _subscriptions: [Subscription; 3],
 }
 
@@ -116,6 +118,7 @@ impl FilterEditorView {
             saving: false,
             error: None,
             status: None,
+            pending_edit: None,
             _subscriptions: subscriptions,
         }
     }
@@ -137,7 +140,23 @@ impl FilterEditorView {
         {
             self.new_filter(window, cx);
         }
+        if let Some(filter_id) = self.pending_edit.take() {
+            self.edit(filter_id, window, cx);
+        }
         cx.notify();
+    }
+
+    /// Open `filter_id` in the form, e.g. from the projects table's context menu; if the
+    /// filters haven't loaded yet, once they do. Does nothing while a save runs.
+    pub fn show_filter(&mut self, filter_id: i64, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving {
+            return;
+        }
+        if self.loading {
+            self.pending_edit = Some(filter_id);
+        } else {
+            self.edit(filter_id, window, cx);
+        }
     }
 
     /// Show why the filters couldn't be loaded.
@@ -724,6 +743,32 @@ mod tests {
         .unwrap();
         cx.run_until_parked();
         assert_eq!(cx.update(|cx| view.read(cx).editing()), None);
+    }
+
+    #[gpui_kit::test]
+    fn shows_a_filter_asked_for_before_or_after_loading(cx: &mut TestAppContext) {
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            open(WindowOptions::default(), cx).unwrap()
+        });
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| view.show_filter(2, window, cx));
+            let filters = vec![
+                filter(1, "Overdue", "due_date < now"),
+                filter(2, "Week", "x"),
+            ];
+            view.update(cx, |view, cx| view.set_filters(filters, window, cx));
+        })
+        .unwrap();
+        assert_eq!(cx.update(|cx| view.read(cx).editing()), Some(2));
+        assert_eq!(cx.update(|cx| view.read(cx).draft(cx).title), "Week");
+
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| view.show_filter(1, window, cx));
+        })
+        .unwrap();
+        assert_eq!(cx.update(|cx| view.read(cx).editing()), Some(1));
     }
 
     #[gpui_kit::test]
