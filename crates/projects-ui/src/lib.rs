@@ -19,9 +19,9 @@ use gpui_kit::{
 use table_layout::TableLayout;
 use vikunja::{Project, ProjectKind};
 
-use projects_table::{ProjectRow, ProjectsTable};
+use projects_table::{ProjectRow, ProjectsTable, RowCommand};
 
-gpui_kit::actions!(projects, [Refresh, OpenProject]);
+gpui_kit::actions!(projects, [Refresh, OpenProject, EditProject]);
 
 const CONTEXT: &str = "Projects";
 
@@ -42,6 +42,10 @@ pub enum ProjectsEvent {
     },
     /// The user opened a saved filter, the same way.
     OpenSavedFilter { filter_id: i64, title: SharedString },
+    /// The user asked to edit this project (its context menu, or Mod+E on its row).
+    EditProject { id: i64 },
+    /// The user asked to edit this saved filter, the same way.
+    EditSavedFilter { filter_id: i64 },
     /// The projects (and saved filters) loaded, on open or after a refresh.
     Loaded(Vec<Project>),
     /// The user moved, resized or sorted a column. Save the layout and restore it with
@@ -54,9 +58,15 @@ pub fn init(cx: &mut App) {
     // `KeyBinding::new` only accepts explicit modifiers; `load` resolves `secondary-`
     // to Cmd on macOS and Ctrl elsewhere.
     let context = KeyBindingContextPredicate::parse(CONTEXT).ok().map(Rc::new);
-    match KeyBinding::load("secondary-r", Box::new(Refresh), context, false, None, cx) {
-        Ok(binding) => cx.bind_keys([binding]),
-        Err(err) => log::error!("invalid refresh key binding: {err}"),
+    let bindings: [(&str, Box<dyn gpui_kit::Action>); 2] = [
+        ("secondary-r", Box::new(Refresh)),
+        ("secondary-e", Box::new(EditProject)),
+    ];
+    for (keystrokes, action) in bindings {
+        match KeyBinding::load(keystrokes, action, context.clone(), false, None, cx) {
+            Ok(binding) => cx.bind_keys([binding]),
+            Err(err) => log::error!("invalid key binding {keystrokes}: {err}"),
+        }
     }
     cx.bind_keys([KeyBinding::new("enter", OpenProject, Some(CONTEXT))]);
 }
@@ -82,6 +92,18 @@ impl ProjectsView {
     pub fn new(load_projects: LoadProjects, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let table = cx.new(|cx| TableState::new(ProjectsTable::default(), window, cx));
         table.read(cx).focus_handle(cx).focus(window, cx);
+        let view = cx.entity().downgrade();
+        table.update(cx, |table, _| {
+            table
+                .delegate_mut()
+                .set_on_row_command(Rc::new(move |row_ix, command, _, cx| {
+                    view.update(cx, |this, cx| match command {
+                        RowCommand::Open => this.open_row(row_ix, cx),
+                        RowCommand::Edit => this.edit_row(row_ix, cx),
+                    })
+                    .ok();
+                }));
+        });
         let table_events = cx.subscribe(&table, |this, _, event: &TableEvent, cx| match event {
             TableEvent::DoubleClickedRow(row_ix) => this.open_row(*row_ix, cx),
             TableEvent::ColumnWidthsChanged(widths) => this.table.update(cx, |table, cx| {
@@ -203,6 +225,25 @@ impl ProjectsView {
         cx.emit(event);
     }
 
+    fn edit_row(&mut self, row_ix: usize, cx: &mut Context<Self>) {
+        let Some(row) = self.table.read(cx).delegate().row(row_ix) else {
+            return;
+        };
+        let event = match row.kind {
+            ProjectKind::SavedFilter { filter_id } => ProjectsEvent::EditSavedFilter { filter_id },
+            ProjectKind::Project => ProjectsEvent::EditProject { id: row.id },
+            // Never listed; the built-in list can't be edited.
+            ProjectKind::Favorites => return,
+        };
+        cx.emit(event);
+    }
+
+    fn on_edit_project(&mut self, _: &EditProject, _: &mut Window, cx: &mut Context<Self>) {
+        if let Some(row_ix) = self.table.read(cx).selected_row() {
+            self.edit_row(row_ix, cx);
+        }
+    }
+
     fn on_open_project(&mut self, _: &OpenProject, _: &mut Window, cx: &mut Context<Self>) {
         if let Some(row_ix) = self.table.read(cx).selected_row() {
             self.open_row(row_ix, cx);
@@ -256,6 +297,7 @@ impl Render for ProjectsView {
             .track_focus(&self.focus_handle)
             .on_action(cx.listener(Self::on_refresh))
             .on_action(cx.listener(Self::on_open_project))
+            .on_action(cx.listener(Self::on_edit_project))
             .size_full()
             .gap_4()
             .p_6()
@@ -580,6 +622,51 @@ mod tests {
                     title: "Home".into(),
                     subproject_ids: Vec::new(),
                 }
+            ]
+        );
+    }
+
+    #[gpui_kit::test]
+    async fn mod_e_asks_to_edit_the_selected_project_or_filter(cx: &mut TestAppContext) {
+        let events = Rc::new(std::cell::RefCell::new(Vec::new()));
+        let seen = Rc::clone(&events);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let load: LoadProjects =
+                Arc::new(|| Ok(vec![project(1, "Work"), project(-3, "Due this week")]));
+            let (handle, view) =
+                gpui_kit::open_window(WindowOptions::default(), cx, |window, cx| {
+                    cx.new(|cx| ProjectsView::new(load, window, cx))
+                })
+                .unwrap();
+            cx.subscribe(&view, move |_, event: &ProjectsEvent, _| {
+                if !matches!(event, ProjectsEvent::Loaded(_)) {
+                    seen.borrow_mut().push(event.clone());
+                }
+            })
+            .detach();
+            (handle, view)
+        });
+        cx.wait_for(handle, Duration::from_secs(5), |window, _| {
+            window.try_find_by_label("Work").is_some()
+        })
+        .await;
+
+        for row_ix in [0, 1] {
+            cx.update(|cx| {
+                let table = view.read(cx).table.clone();
+                table.update(cx, |table, cx| table.set_selected_row(row_ix, cx));
+            });
+            cx.update_window(handle, |_, window, cx| window.press("secondary-e", cx))
+                .unwrap();
+        }
+        assert_eq!(
+            *events.borrow(),
+            [
+                ProjectsEvent::EditProject { id: 1 },
+                // Saved filter -3 is filter 2.
+                ProjectsEvent::EditSavedFilter { filter_id: 2 },
             ]
         );
     }

@@ -98,7 +98,8 @@ its details in a new window (the default), edit the task, mark it done or not do
 open it in the browser.
 
 Create projects and change their name, identifier, colour, description or parent: choose
-**Edit Projects…** from the **Projects** menu. **Edit Saved Filters…**, beside it, creates
+**Edit Projects…** from the **Projects** menu, or right-click a project in the main
+window and choose **Edit project…**. **Edit Saved Filters…**, beside it, creates
 saved filters and changes their name, description or query, written in Vikunja's filter
 syntax (`done = false && due_date < now/w+1w`, say).
 
@@ -141,7 +142,7 @@ Vikui must be able to write to the folder it is installed in. On macOS, move
 | `Enter`           | Open a project / toggle reminder details |
 | `Mod+Enter`       | Open the selected task in its own window |
 | `Mod+O`           | Open the selected task in the browser    |
-| `Mod+E`           | Edit the selected task                   |
+| `Mod+E`           | Edit the selected task or project        |
 | `Escape`          | Close reminder details                   |
 | `T` / `Mod+D`     | Mark the selected task done or not done  |
 | `Mod+,`           | Open settings                            |

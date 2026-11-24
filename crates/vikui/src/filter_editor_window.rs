@@ -61,6 +61,26 @@ pub fn open(cx: &mut App) {
     .detach();
 }
 
+/// Open the window on `filter_id`'s saved filter, or bring it to the front showing it. Does
+/// nothing while signed out.
+pub fn edit(filter_id: i64, cx: &mut App) {
+    open(cx);
+    let Some((handle, view)) = cx
+        .try_global::<FilterEditorWindow>()
+        .and_then(|open| open.0.clone())
+    else {
+        return;
+    };
+    let Some(view) = view.upgrade() else {
+        return;
+    };
+    handle
+        .update(cx, |_, window, cx| {
+            view.update(cx, |view, cx| view.show_filter(filter_id, window, cx));
+        })
+        .ok();
+}
+
 fn load(
     handle: AnyWindowHandle,
     view: WeakEntity<FilterEditorView>,

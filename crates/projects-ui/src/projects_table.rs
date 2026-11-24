@@ -1,7 +1,10 @@
 //! Table delegate listing the user's projects.
 
 use std::cmp::Ordering;
+use std::rc::Rc;
 
+use gpui_kit::component::IconName;
+use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
 use gpui_kit::component::{ActiveTheme as _, h_flex};
 use gpui_kit::{
@@ -106,8 +109,20 @@ impl Col {
     }
 }
 
+/// What a row's context menu offers.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RowCommand {
+    Open,
+    Edit,
+}
+
+/// Called with the row's index (in display order) and the command picked from its
+/// context menu.
+pub type OnRowCommand = Rc<dyn Fn(usize, RowCommand, &mut Window, &mut App)>;
+
 pub struct ProjectsTable {
     rows: Vec<ProjectRow>,
+    on_row_command: Option<OnRowCommand>,
     loading: bool,
     /// Their order, widths and sort, as the user left them.
     columns: Columns<Col>,
@@ -117,6 +132,7 @@ impl Default for ProjectsTable {
     fn default() -> Self {
         Self {
             rows: Vec::new(),
+            on_row_command: None,
             loading: false,
             columns: Columns::new(&COLUMNS),
         }
@@ -124,6 +140,11 @@ impl Default for ProjectsTable {
 }
 
 impl ProjectsTable {
+    /// Gives each row a context menu of [`RowCommand`]s.
+    pub fn set_on_row_command(&mut self, on_row_command: OnRowCommand) {
+        self.on_row_command = Some(on_row_command);
+    }
+
     pub fn set_loading(&mut self, loading: bool) {
         self.loading = loading;
     }
@@ -334,6 +355,31 @@ impl TableDelegate for ProjectsTable {
             .justify_center()
             .text_color(cx.theme().muted_foreground)
             .child("No projects yet.")
+    }
+
+    fn context_menu(
+        &mut self,
+        row_ix: usize,
+        menu: PopupMenu,
+        _: &mut Window,
+        _: &mut Context<TableState<Self>>,
+    ) -> PopupMenu {
+        let (Some(on_command), Some(row)) = (self.on_row_command.clone(), self.rows.get(row_ix))
+        else {
+            return menu;
+        };
+        let (open, edit) = match row.kind {
+            ProjectKind::SavedFilter { .. } => ("Open filter", "Edit filter…"),
+            ProjectKind::Project | ProjectKind::Favorites => ("Open project", "Edit project…"),
+        };
+        let item = |label: &'static str, icon: Option<IconName>, command: RowCommand| {
+            let on_command = Rc::clone(&on_command);
+            PopupMenuItem::new(label)
+                .when_some(icon, PopupMenuItem::icon)
+                .on_click(move |_, window, cx| on_command(row_ix, command, window, cx))
+        };
+        menu.item(item(open, Some(IconName::ExternalLink), RowCommand::Open))
+            .item(item(edit, None, RowCommand::Edit))
     }
 
     fn loading(&self, _: &App) -> bool {

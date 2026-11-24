@@ -59,6 +59,26 @@ pub fn open(cx: &mut App) {
     .detach();
 }
 
+/// Open the window on `project_id`'s project, or bring it to the front showing it. Does
+/// nothing while signed out.
+pub fn edit(project_id: i64, cx: &mut App) {
+    open(cx);
+    let Some((handle, view)) = cx
+        .try_global::<ProjectEditorWindow>()
+        .and_then(|open| open.0.clone())
+    else {
+        return;
+    };
+    let Some(view) = view.upgrade() else {
+        return;
+    };
+    handle
+        .update(cx, |_, window, cx| {
+            view.update(cx, |view, cx| view.show_project(project_id, window, cx));
+        })
+        .ok();
+}
+
 fn load(
     handle: AnyWindowHandle,
     view: WeakEntity<ProjectEditorView>,

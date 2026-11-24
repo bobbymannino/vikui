@@ -213,6 +213,10 @@ fn open_main_window(signed_in: app_session::SignedIn, cx: &mut App) {
             let source = match event {
                 ProjectsEvent::SessionExpired => return expire(cx),
                 ProjectsEvent::Loaded(projects) => return projects_menu::set(projects, cx),
+                ProjectsEvent::EditProject { id } => return project_editor_window::edit(*id, cx),
+                ProjectsEvent::EditSavedFilter { filter_id } => {
+                    return filter_editor_window::edit(*filter_id, cx);
+                }
                 ProjectsEvent::TableLayoutChanged(layout) => {
                     let layout = layout.clone();
                     return app_preferences::update(cx, |preferences| {
