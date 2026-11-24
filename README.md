@@ -91,6 +91,7 @@ Pick an appearance on the **Appearance** tab of **Settings**: **Light**, **Dark*
 the one shown while dark from the themes GPUI Kit publishes (Solarized, Catppuccin,
 Gruvbox, Tokyo Night and more), bundled from its repository under the Apache 2.0 licence
 (`crates/vikui/themes`).
+The same choices are under **View › Theme** in the menu bar.
 
 Pick what double-clicking a reminder does on the **Reminders** tab of **Settings**: open
 its details in a new window (the default), edit the task, mark it done or not done, or
@@ -142,6 +143,7 @@ Vikui must be able to write to the folder it is installed in. On macOS, move
 
 ## Feedback
 
-Found a bug or have an idea? Choose **Report a Bug…** or **Request a Feature…** on the
-**About** tab of **Settings**, or open a [new issue](../../issues/new/choose). Reporting a
-bug from Settings fills in your OS and Vikui version.
+Found a bug or have an idea? Choose **Report a Bug…** or **Request a Feature…** from the
+**Help** menu or the **About** tab of **Settings**, or open a
+[new issue](../../issues/new/choose). Reporting a bug from the app fills in your OS and
+Vikui version.

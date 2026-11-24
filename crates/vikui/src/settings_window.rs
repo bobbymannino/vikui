@@ -64,11 +64,33 @@ fn theme_choices(cx: &App) -> ThemeChoices {
     }
 }
 
-/// Save a change to the theme preferences and show it.
-fn change_theme(cx: &mut App, change: impl FnOnce(&mut preferences::ThemePreferences)) {
-    crate::app_preferences::update(cx, |preferences| change(&mut preferences.theme));
-    let theme = crate::app_preferences::get(cx).theme;
-    crate::app_theme::apply(&theme, cx);
+/// Show the saved appearance and the themes shown in the settings window, if it is open,
+/// e.g. after they were changed from the menu bar.
+pub fn show_theme(cx: &mut App) {
+    let Some(opened) = cx
+        .try_global::<SettingsWindow>()
+        .and_then(|open| open.0.clone())
+    else {
+        return;
+    };
+    let Some(view) = opened.view.upgrade() else {
+        return;
+    };
+    let choices = theme_choices(cx);
+    let shown = opened.handle.update(cx, |_, window, cx| {
+        view.update(cx, |view, cx| {
+            view.show_theme(
+                choices.appearance,
+                &choices.light,
+                &choices.dark,
+                window,
+                cx,
+            );
+        });
+    });
+    if let Err(err) = shown {
+        log::warn!("settings window not updated: {err:#}");
+    }
 }
 
 /// Open the settings window, or activate it if it is already open. Opening it checks for
@@ -188,13 +210,13 @@ impl Updates {
                     settings_ui::Appearance::Dark => Appearance::Dark,
                     settings_ui::Appearance::Auto => Appearance::Auto,
                 };
-                change_theme(cx, |theme| theme.appearance = appearance);
+                crate::app_theme::change(cx, |theme| theme.appearance = appearance);
             }
             SettingsEvent::SetLightTheme(name) => {
-                change_theme(cx, |theme| theme.light = Some(name.to_string()));
+                crate::app_theme::change(cx, |theme| theme.light = Some(name.to_string()));
             }
             SettingsEvent::SetDarkTheme(name) => {
-                change_theme(cx, |theme| theme.dark = Some(name.to_string()));
+                crate::app_theme::change(cx, |theme| theme.dark = Some(name.to_string()));
             }
             &SettingsEvent::SetCheckForUpdatesOnOpen(on) => {
                 crate::app_preferences::update(cx, |preferences| {

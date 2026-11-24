@@ -14,6 +14,7 @@ mod projects_menu;
 mod reminders_window;
 mod settings_window;
 mod task_window;
+mod theme_menu;
 
 use std::cell::Cell;
 use std::rc::Rc;
@@ -44,6 +45,7 @@ fn main() {
         app_theme::init(cx);
         app_actions::init(cx);
         projects_menu::init(cx);
+        theme_menu::init(cx);
         overview_ui::init(cx);
         projects_ui::init(cx);
         reminders_ui::init(cx);
@@ -59,6 +61,8 @@ fn main() {
         // in the saved theme.
         app_preferences::load(cx, |preferences, cx| {
             app_theme::apply(&preferences.theme, cx);
+            // Check the saved theme in the menu bar.
+            app_menu::refresh(cx);
             open_initial_window(cx);
             if preferences.check_for_updates_on_open {
                 settings_window::check_on_launch(cx);

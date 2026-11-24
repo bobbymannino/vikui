@@ -302,6 +302,25 @@ impl SettingsView {
         self.appearance
     }
 
+    /// Show `appearance` and the `light` and `dark` themes as chosen, e.g. after they were
+    /// changed from the menu bar. Unlike picking them here, this reports no event.
+    pub fn show_theme(
+        &mut self,
+        appearance: Appearance,
+        light: &SharedString,
+        dark: &SharedString,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        self.light_theme.update(cx, |select, cx| {
+            select.set_selected_value(light, window, cx);
+        });
+        self.dark_theme
+            .update(cx, |select, cx| select.set_selected_value(dark, window, cx));
+        self.appearance = appearance;
+        cx.notify();
+    }
+
     fn set_appearance(&mut self, appearance: Appearance, cx: &mut Context<Self>) {
         if self.appearance != appearance {
             self.appearance = appearance;
@@ -822,6 +841,60 @@ mod tests {
                 SettingsEvent::SetDarkTheme("Gruvbox Dark".into()),
             ]
         );
+    }
+
+    #[gpui_kit::test]
+    fn shows_theme_changes_made_elsewhere_without_reporting_them(cx: &mut TestAppContext) {
+        let about = about();
+        let theme = ThemeChoices {
+            appearance: Appearance::Auto,
+            light: "Default Light".into(),
+            dark: "Default Dark".into(),
+            light_themes: vec!["Default Light".into(), "Solarized Light".into()],
+            dark_themes: vec!["Default Dark".into(), "Gruvbox Dark".into()],
+        };
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            open(WindowOptions::default(), about, true, theme, cx).unwrap()
+        });
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = std::rc::Rc::clone(&events);
+            cx.subscribe(&view, move |_, event, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+
+        cx.update_window(handle, |_, window, cx| {
+            view.update(cx, |view, cx| {
+                view.show_theme(
+                    Appearance::Light,
+                    &"Solarized Light".into(),
+                    &"Gruvbox Dark".into(),
+                    window,
+                    cx,
+                );
+            });
+        })
+        .unwrap();
+        cx.run_until_parked();
+        cx.update(|cx| {
+            let view = view.read(cx);
+            assert_eq!(view.appearance(), Appearance::Light);
+            assert_eq!(
+                view.light_theme
+                    .read(cx)
+                    .selected_value()
+                    .map(AsRef::as_ref),
+                Some("Solarized Light")
+            );
+            assert_eq!(
+                view.dark_theme.read(cx).selected_value().map(AsRef::as_ref),
+                Some("Gruvbox Dark")
+            );
+        });
+        assert!(events.borrow().is_empty());
     }
 
     #[gpui_kit::test]

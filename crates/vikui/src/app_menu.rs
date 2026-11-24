@@ -8,13 +8,14 @@ use gpui_kit::{App, Menu, MenuItem, OsAction};
 
 use crate::app_actions::{
     CheckForUpdates, CloseWindow, Minimize, NewReminder, OpenProjects, OpenSettings, Quit, Refresh,
-    SearchAllTasks, Zoom,
+    ReportBug, RequestFeature, SearchAllTasks, Zoom,
 };
 #[cfg(target_os = "macos")]
 use crate::app_actions::{Hide, HideOthers, ShowAll};
 
 /// Install the menu bar. Call after [`crate::app_actions::init`] and
-/// [`crate::projects_menu::init`], so the menus pick up their key bindings.
+/// [`crate::projects_menu::init`], so the menus pick up their key bindings, and after
+/// [`crate::app_theme::init`], so the Theme submenu lists every theme.
 pub fn init(cx: &mut App) {
     refresh(cx);
 }
@@ -22,10 +23,11 @@ pub fn init(cx: &mut App) {
 /// Rebuild the menu bar, e.g. after the projects listed in it change.
 pub fn refresh(cx: &mut App) {
     let projects = crate::projects_menu::items(cx);
-    cx.set_menus(menus(projects));
+    let theme = crate::theme_menu::submenu(cx);
+    cx.set_menus(menus(projects, theme));
 }
 
-fn menus(projects: Vec<MenuItem>) -> Vec<Menu> {
+fn menus(projects: Vec<MenuItem>, theme: MenuItem) -> Vec<Menu> {
     vec![
         app_menu(),
         Menu::new("File").items([
@@ -44,13 +46,21 @@ fn menus(projects: Vec<MenuItem>) -> Vec<Menu> {
             MenuItem::separator(),
             MenuItem::action("Search All Tasks…", SearchAllTasks),
         ]),
-        Menu::new("View").items([MenuItem::action("Refresh", Refresh)]),
+        Menu::new("View").items([
+            MenuItem::action("Refresh", Refresh),
+            MenuItem::separator(),
+            theme,
+        ]),
         Menu::new("Projects").items(projects),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),
             MenuItem::action("Zoom", Zoom),
             MenuItem::separator(),
             MenuItem::action("Open Projects Window", OpenProjects),
+        ]),
+        Menu::new("Help").items([
+            MenuItem::action("Report a Bug…", ReportBug),
+            MenuItem::action("Request a Feature…", RequestFeature),
         ]),
     ]
 }
@@ -98,11 +108,13 @@ mod tests {
 
     #[test]
     fn has_the_standard_menus() {
-        let menus = menus(Vec::new());
+        let menus = menus(Vec::new(), MenuItem::submenu(Menu::new("Theme")));
         let titles: Vec<&str> = menus.iter().map(|menu| menu.name.as_ref()).collect();
         assert_eq!(
             titles,
-            ["Vikui", "File", "Edit", "View", "Projects", "Window"]
+            [
+                "Vikui", "File", "Edit", "View", "Projects", "Window", "Help"
+            ]
         );
         assert!(menus.iter().any(|menu| names(menu).contains(&"Refresh")));
         assert!(
@@ -111,10 +123,11 @@ mod tests {
                 .find(|menu| menu.name.as_ref() == "Edit")
                 .is_some_and(|menu| names(menu).contains(&"Search All Tasks…"))
         );
+        let menu = |title: &str| menus.iter().find(|menu| menu.name.as_ref() == title);
+        assert!(menu("Window").is_some_and(|menu| names(menu).contains(&"Open Projects Window")));
         assert!(
-            menus
-                .last()
-                .is_some_and(|menu| names(menu).contains(&"Open Projects Window"))
+            menu("Help")
+                .is_some_and(|menu| { names(menu) == ["Report a Bug…", "Request a Feature…"] })
         );
         assert!(
             menus
