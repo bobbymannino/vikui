@@ -1,12 +1,12 @@
 //! Vikui's settings window.
 //!
-//! One tab per [`SettingsTab`]: General lets the user start the app at login, Appearance
+//! One tab per [`SettingsTab`]: General lets the user pick what happens at login, Appearance
 //! pick the appearance and colour
 //! themes, Reminders what double-clicking a reminder does, Updates lets them update the
 //! app, and About shows what the app is (its name, version and a link to its source) and
 //! links to report a bug or request a feature. The
 //! app supplies [`About`], the [`ThemeChoices`], the [`DoubleClickAction`] and the
-//! [`UpdateStatus`], whether it [`StartAtLogin`] (and, for the Tray tab, [`TraySettingsView`]'s choices), and applies
+//! [`UpdateStatus`], what it does at login ([`StartAtLogin`]) (and, for the Tray tab, [`TraySettingsView`]'s choices), and applies
 //! and saves changes, checks and installs when the view asks
 //! through [`SettingsEvent`]; this crate never fetches or saves. The app can bring a tab
 //! forward with [`SettingsView::set_tab`], e.g. Updates when one is available.
@@ -156,24 +156,59 @@ impl DoubleClickAction {
     }
 }
 
-/// Whether the app starts at login, as the system has it.
+/// What the app does when the user logs in.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum StartupAction {
+    /// Nothing: the app doesn't start at login.
+    #[default]
+    DoNotOpen,
+    /// Start and show the main window.
+    OpenWindow,
+    /// Start with only the tray icon showing.
+    OpenTray,
+}
+
+impl StartupAction {
+    /// The choices this platform has, in the order shown; the tray icon needs macOS or
+    /// Windows (see the `tray` crate).
+    #[must_use]
+    pub fn all() -> &'static [Self] {
+        if tray_settings::SUPPORTED {
+            &[Self::DoNotOpen, Self::OpenWindow, Self::OpenTray]
+        } else {
+            &[Self::DoNotOpen, Self::OpenWindow]
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::DoNotOpen => "Do not open at login",
+            Self::OpenWindow => "Open the main window",
+            Self::OpenTray => "Open only the tray icon",
+        }
+    }
+}
+
+/// What the app does at login, as far as is known.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub enum StartAtLogin {
-    /// Not read yet, or being changed.
+    /// Not read from the system yet, or being changed.
     #[default]
     Unknown,
-    On,
-    Off,
-    /// Reading or changing it failed; it stands at `on` as far as is known.
+    Known(StartupAction),
+    /// Reading or changing it failed; it stands at `action` as far as is known.
     Failed {
-        on: bool,
+        action: StartupAction,
         message: SharedString,
     },
 }
 
 impl StartAtLogin {
-    fn is_on(&self) -> bool {
-        matches!(self, Self::On | Self::Failed { on: true, .. })
+    fn action(&self) -> Option<StartupAction> {
+        match self {
+            Self::Unknown => None,
+            Self::Known(action) | Self::Failed { action, .. } => Some(*action),
+        }
     }
 }
 
@@ -247,9 +282,9 @@ pub enum SettingsEvent {
     SetReminderDoubleClick(DoubleClickAction),
     /// The user changed the tray's settings; apply and save them.
     SetTray(TraySettings),
-    /// The user turned starting the app at login on or off; change it, then call
+    /// The user picked what the app does at login; change it, then call
     /// [`SettingsView::set_start_at_login`] with how it stands.
-    SetStartAtLogin(bool),
+    SetStartAtLogin(StartupAction),
 }
 
 /// The settings view.
@@ -461,47 +496,62 @@ impl SettingsView {
         }
     }
 
-    fn toggle_start_at_login(&mut self, on: bool, cx: &mut Context<Self>) {
-        if self.start_at_login != StartAtLogin::Unknown && self.start_at_login.is_on() != on {
+    fn pick_start_at_login(&mut self, action: StartupAction, cx: &mut Context<Self>) {
+        let Some(current) = self.start_at_login.action() else {
+            return;
+        };
+        if current != action {
             // Unknown until the app reports the change made.
             self.start_at_login = StartAtLogin::Unknown;
-            cx.emit(SettingsEvent::SetStartAtLogin(on));
+            cx.emit(SettingsEvent::SetStartAtLogin(action));
             cx.notify();
         }
     }
 
     fn render_general(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let label = format!("Start {} at login", self.about.name);
+        let actions = StartupAction::all();
+        let selected = self
+            .start_at_login
+            .action()
+            .and_then(|action| actions.iter().position(|shown| *shown == action));
+        let message = match &self.start_at_login {
+            StartAtLogin::Failed { message, .. } => Some(message.clone()),
+            StartAtLogin::Unknown | StartAtLogin::Known(_) => None,
+        };
         v_flex()
             .id("settings-general")
             .gap_2()
             .child(
-                Switch::new("start-at-login")
-                    .checked(self.start_at_login.is_on())
-                    .disabled(self.start_at_login == StartAtLogin::Unknown)
-                    .label(label.clone())
-                    .accessibility_label(label)
-                    .on_change(cx.listener(|this, on: &bool, _, cx| {
-                        this.toggle_start_at_login(*on, cx);
-                    })),
+                v_form().child(
+                    field().label("When you log in").child(
+                        RadioGroup::vertical("start-at-login")
+                            .selected_index(selected)
+                            .disabled(self.start_at_login == StartAtLogin::Unknown)
+                            .children(
+                                actions
+                                    .iter()
+                                    .enumerate()
+                                    .map(|(ix, action)| Radio::new(ix).label(action.label())),
+                            )
+                            .on_change(cx.listener(|this, ix: &usize, _, cx| {
+                                if let Some(action) = StartupAction::all().get(*ix) {
+                                    this.pick_start_at_login(*action, cx);
+                                }
+                            })),
+                    ),
+                ),
             )
-            .when_some(
-                match &self.start_at_login {
-                    StartAtLogin::Failed { message, .. } => Some(message.clone()),
-                    _ => None,
-                },
-                |panel, message| {
-                    panel.child(
-                        div()
-                            .id("start-at-login-error")
-                            .role(Role::Alert)
-                            .aria_label(message.clone())
-                            .test_support()
-                            .text_color(cx.theme().danger)
-                            .child(message),
-                    )
-                },
-            )
+            .when_some(message, |panel, message| {
+                panel.child(
+                    div()
+                        .id("start-at-login-error")
+                        .role(Role::Alert)
+                        .aria_label(message.clone())
+                        .test_support()
+                        .text_color(cx.theme().danger)
+                        .child(message),
+                )
+            })
     }
 
     fn render_reminders(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -1013,7 +1063,7 @@ mod tests {
     }
 
     #[gpui_kit::test]
-    fn toggles_starting_at_login_once_its_state_is_known(cx: &mut TestAppContext) {
+    fn picks_what_happens_at_login_once_it_is_known(cx: &mut TestAppContext) {
         let about = about();
         let (handle, view) = cx.update(|cx| {
             gpui_kit::init(cx);
@@ -1034,11 +1084,10 @@ mod tests {
             })
             .detach();
         });
-        let toggle = |cx: &mut TestAppContext| {
+        let pick = |cx: &mut TestAppContext, ix: usize| {
             cx.update_window(handle, |_, window, cx| {
                 window.render_frame(cx);
-                window.find_by_label("Start Vikui at login");
-                window.click("start-at-login", cx);
+                window.within("start-at-login").click(ix, cx);
             })
             .unwrap();
             cx.run_until_parked();
@@ -1046,17 +1095,34 @@ mod tests {
         let state =
             |cx: &mut TestAppContext| cx.update(|cx| view.read(cx).start_at_login().clone());
 
-        // Not read from the system yet: clicking does nothing.
-        toggle(cx);
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            window.find_by_label("Do not open at login");
+            window.find_by_label("Open the main window");
+            let tray = window
+                .try_find_by_label("Open only the tray icon")
+                .is_some();
+            assert_eq!(
+                tray,
+                StartupAction::all().contains(&StartupAction::OpenTray)
+            );
+        })
+        .unwrap();
+
+        // Not read from the system yet: picking does nothing.
+        pick(cx, 1);
         assert!(events.borrow().is_empty());
 
         cx.update(|cx| {
             view.update(cx, |view, cx| {
-                view.set_start_at_login(StartAtLogin::Off, cx);
+                view.set_start_at_login(StartAtLogin::Known(StartupAction::DoNotOpen), cx);
             });
         });
-        toggle(cx);
-        assert_eq!(*events.borrow(), [SettingsEvent::SetStartAtLogin(true)]);
+        pick(cx, 1);
+        assert_eq!(
+            *events.borrow(),
+            [SettingsEvent::SetStartAtLogin(StartupAction::OpenWindow)]
+        );
         assert_eq!(
             state(cx),
             StartAtLogin::Unknown,
@@ -1064,7 +1130,7 @@ mod tests {
         );
 
         let failed = StartAtLogin::Failed {
-            on: false,
+            action: StartupAction::DoNotOpen,
             message: "Couldn't start Vikui at login: denied".into(),
         };
         cx.update(|cx| view.update(cx, |view, cx| view.set_start_at_login(failed, cx)));
@@ -1171,7 +1237,7 @@ mod tests {
             assert_eq!(window.find_all_by_role(Role::TabPanel).len(), 1);
         })
         .unwrap();
-        assert!(shows(cx, "Start Vikui at login"));
+        assert!(shows(cx, "Do not open at login"));
         assert!(!shows(cx, "Light theme"));
         assert!(!shows(cx, "Check for Updates"));
         assert!(!shows(cx, "Version 1.2.3"));

@@ -221,7 +221,7 @@ const COUNT_LABEL: &str = "Show the number of reminders beside the icon";
 const COUNT_LABEL: &str = "Show the number of reminders when hovering the icon";
 
 /// Only macOS and Windows have a tray icon (see the `tray` crate).
-const SUPPORTED: bool = cfg!(any(target_os = "macos", target_os = "windows"));
+pub(crate) const SUPPORTED: bool = cfg!(any(target_os = "macos", target_os = "windows"));
 
 impl Render for TraySettingsView {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
