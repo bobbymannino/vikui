@@ -1,13 +1,15 @@
 //! Table delegate listing reminders.
 
 use std::cmp::Ordering;
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::IconName;
 use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
+use gpui_kit::component::spinner::Spinner;
 use gpui_kit::component::table::{Column, ColumnSort, TableDelegate, TableState};
-use gpui_kit::component::{ActiveTheme as _, h_flex};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, h_flex};
 use gpui_kit::{
     App, Context, Div, InteractiveElement as _, IntoElement, ParentElement as _, Pixels, Role,
     SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,
@@ -23,6 +25,7 @@ use crate::label_tag::LabelTag;
 /// One row, formatted off the render path.
 #[derive(Clone, Debug)]
 pub struct ReminderRow {
+    pub task_id: i64,
     pub identifier: SharedString,
     pub task: SharedString,
     /// `0xRRGGBB`, drawn as a dot before the title; `None` for no colour.
@@ -55,6 +58,7 @@ impl ReminderRow {
             .iter()
             .enumerate()
             .map(|(order, reminder)| Self {
+                task_id: reminder.task_id,
                 identifier: reminder.task_reference().into(),
                 task: reminder.task_title.clone().into(),
                 rgb: reminder.task_rgb,
@@ -160,6 +164,8 @@ pub struct RemindersTable {
     empty_message: SharedString,
     /// Their order, widths and sort, as the user left them.
     columns: Columns<Col>,
+    /// Tasks being saved, by id.
+    pending: HashSet<i64>,
 }
 
 impl Default for RemindersTable {
@@ -171,6 +177,7 @@ impl Default for RemindersTable {
             loading: false,
             empty_message: "No reminders.".into(),
             columns: Columns::new(&COLUMNS),
+            pending: HashSet::new(),
         }
     }
 }
@@ -229,6 +236,18 @@ impl RemindersTable {
     pub fn set_widths(&mut self, widths: &[Pixels]) {
         self.columns
             .set_widths(widths.iter().map(|&width| whole_pixels(width)));
+    }
+
+    /// Show which tasks are being saved, by id: their rows get a spinner and are named
+    /// "saving".
+    pub fn set_pending(&mut self, pending: &HashSet<i64>) {
+        pending.clone_into(&mut self.pending);
+    }
+
+    fn is_pending(&self, row_ix: usize) -> bool {
+        self.rows
+            .get(row_ix)
+            .is_some_and(|row| self.pending.contains(&row.task_id))
     }
 
     fn cell(&self, row_ix: usize, col_ix: usize) -> Option<&SharedString> {
@@ -421,7 +440,16 @@ impl TableDelegate for RemindersTable {
                 .into_any_element();
         }
         let text = self.cell(row_ix, col_ix).cloned().unwrap_or_default();
+        let pending = self.is_pending(row_ix);
         let swatch = (col == Some(Col::Task)).then(|| {
+            if pending {
+                // In the dot's place, so titles stay aligned; the cell's name says
+                // "saving", so this isn't shown by motion alone.
+                return Spinner::new()
+                    .xsmall()
+                    .color(cx.theme().muted_foreground)
+                    .into_any_element();
+            }
             // Decoration only: the colour is the task's (or its project's), and the
             // title names it. Muted rows fade it like their text.
             let dot = div()
@@ -434,6 +462,7 @@ impl TableDelegate for RemindersTable {
                 // Keeps titles aligned with those that have a colour.
                 None => dot,
             }
+            .into_any_element()
         });
         h_flex()
             .w_full()
@@ -448,7 +477,13 @@ impl TableDelegate for RemindersTable {
     }
 
     fn cell_label(&self, row_ix: usize, col_ix: usize, _: &App) -> Option<SharedString> {
-        self.cell(row_ix, col_ix).cloned()
+        let text = self.cell(row_ix, col_ix)?;
+        let saving = self.columns.get(col_ix) == Some(Col::Task) && self.is_pending(row_ix);
+        Some(if saving {
+            format!("{text}, saving").into()
+        } else {
+            text.clone()
+        })
     }
 
     fn cell_text(&self, row_ix: usize, col_ix: usize, _: &App) -> String {

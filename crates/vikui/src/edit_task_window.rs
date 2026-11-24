@@ -164,26 +164,30 @@ fn save(
     let session = signed_in.session;
     let task_id = edit.task_id;
     let added = update.add_label_ids.clone();
+    crate::reminders_window::set_task_pending(task_id, true, cx);
     let save = cx.background_spawn(async move {
         session.call(|client, token| new_reminder::save(client, token, task_id, &update))
     });
     let shared = Rc::clone(shared);
     cx.spawn(async move |cx| {
         let result = save.await;
-        cx.update(|cx| match result {
-            Ok(task) => {
-                let missing = new_reminder::missing_labels(&added, &task);
-                if !missing.is_empty() {
-                    log::warn!("task {task_id} was saved without labels {missing:?}");
+        cx.update(|cx| {
+            crate::reminders_window::set_task_pending(task_id, false, cx);
+            match result {
+                Ok(task) => {
+                    let missing = new_reminder::missing_labels(&added, &task);
+                    if !missing.is_empty() {
+                        log::warn!("task {task_id} was saved without labels {missing:?}");
+                    }
+                    close(handle, cx);
+                    crate::reminders_window::reload(cx);
+                    show_in_task_window(&task, &shared, cx);
                 }
-                close(handle, cx);
-                crate::reminders_window::reload(cx);
-                show_in_task_window(&task, &shared, cx);
-            }
-            Err(vikunja::Error::Unauthorized) => (signed_in.on_session_expired)(cx),
-            Err(err) => {
-                log::warn!("failed to save task {task_id}: {err:#}");
-                show_error(&view, format!("Couldn't save the task: {err}"), cx);
+                Err(vikunja::Error::Unauthorized) => (signed_in.on_session_expired)(cx),
+                Err(err) => {
+                    log::warn!("failed to save task {task_id}: {err:#}");
+                    show_error(&view, format!("Couldn't save the task: {err}"), cx);
+                }
             }
         });
     })

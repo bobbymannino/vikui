@@ -35,6 +35,7 @@
 mod label_tag;
 mod reminders_table;
 
+use std::collections::HashSet;
 use std::rc::Rc;
 
 use gpui_kit::base::{Selectable as _, TestSupportExt as _};
@@ -194,6 +195,8 @@ pub struct RemindersView {
     /// The table layout last reported or restored, by [`RemindersTable::layout_revision`].
     layout_revision: u64,
     double_click: DoubleClickAction,
+    /// Tasks being saved, by id; their rows show a spinner and can't be toggled again.
+    pending: HashSet<i64>,
     _table_events: Subscription,
     _table_layout: Subscription,
     _search_events: Subscription,
@@ -301,6 +304,7 @@ impl RemindersView {
             details_for: None,
             layout_revision: 0,
             double_click: DoubleClickAction::default(),
+            pending: HashSet::new(),
             _table_events: table_events,
             _table_layout: table_layout,
             _search_events: search_events,
@@ -457,9 +461,33 @@ impl RemindersView {
         }
     }
 
+    /// Show whether `task_id` is being saved: its rows get a spinner, and asking to mark
+    /// it done or not done again is ignored until the save ends.
+    pub fn set_task_pending(&mut self, task_id: i64, pending: bool, cx: &mut Context<Self>) {
+        let changed = if pending {
+            self.pending.insert(task_id)
+        } else {
+            self.pending.remove(&task_id)
+        };
+        if changed {
+            let pending = &self.pending;
+            self.table.update(cx, |table, cx| {
+                table.delegate_mut().set_pending(pending);
+                cx.notify();
+            });
+        }
+    }
+
+    /// Whether `task_id` is being saved.
+    #[must_use]
+    pub fn is_task_pending(&self, task_id: i64) -> bool {
+        self.pending.contains(&task_id)
+    }
+
     /// Mark every reminder of `task_id` done or not done, keeping the list's order,
-    /// selection and details panel.
+    /// selection and details panel. This ends its save, see [`Self::set_task_pending`].
     pub fn set_task_done(&mut self, task_id: i64, done: bool, cx: &mut Context<Self>) {
+        self.set_task_pending(task_id, false, cx);
         let mut changed = false;
         for reminder in self
             .reminders
@@ -651,6 +679,7 @@ impl RemindersView {
         if let Some(reminder) = self
             .order_of(row_ix, cx)
             .and_then(|order| self.reminders.get(order))
+            .filter(|reminder| !self.pending.contains(&reminder.task_id))
         {
             cx.emit(RemindersEvent::SetDone {
                 task_id: reminder.task_id,
@@ -1292,6 +1321,68 @@ mod tests {
                     done: false
                 },
             ]
+        );
+    }
+
+    #[gpui_kit::test]
+    fn a_saving_task_shows_a_spinner_and_ignores_toggles(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let reminders = vec![reminder(soon, "Pay rent")];
+            open(options(), "Reminders – Home", Some(reminders), cx).unwrap()
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = Rc::clone(&events);
+            cx.subscribe(&view, move |_, event: &RemindersEvent, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        let key = |cx: &mut TestAppContext, key: &str| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.key_down(key, false, cx);
+                window.key_up(key, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        let saving = |cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.try_find_by_label("Pay rent, saving").is_some()
+            })
+            .unwrap()
+        };
+        let set_pending = |cx: &mut TestAppContext, pending: bool| {
+            cx.update(|cx| view.update(cx, |view, cx| view.set_task_pending(1, pending, cx)));
+        };
+        key(cx, "down");
+        assert!(!saving(cx));
+
+        set_pending(cx, true);
+        assert!(saving(cx));
+        assert!(cx.update(|cx| view.read(cx).is_task_pending(1)));
+        key(cx, "t");
+        assert!(events.borrow().is_empty(), "no second save while one runs");
+
+        // A save that fails ends with `set_task_pending(false)`; one that succeeds, with
+        // `set_task_done`.
+        set_pending(cx, false);
+        assert!(!saving(cx));
+        set_pending(cx, true);
+        cx.update(|cx| view.update(cx, |view, cx| view.set_task_done(1, true, cx)));
+        assert!(!saving(cx));
+        key(cx, "t");
+        assert_eq!(
+            *events.borrow(),
+            [RemindersEvent::SetDone {
+                task_id: 1,
+                done: false
+            }]
         );
     }
 
