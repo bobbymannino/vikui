@@ -7,8 +7,6 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
-# The date picker's value type.
-chrono = { version = "0.4.45", default-features = false }
 gpui-kit.workspace = true
 jiff.workspace = true
 log.workspace = true

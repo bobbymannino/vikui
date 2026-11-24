@@ -14,7 +14,6 @@ mod label_chip;
 use std::collections::BTreeSet;
 use std::rc::Rc;
 
-use chrono::{Datelike as _, NaiveDate, NaiveDateTime, Timelike as _};
 use gpui_kit::base::TestSupportExt as _;
 use gpui_kit::component::alert::Alert;
 use gpui_kit::component::button::{Button, ButtonVariants as _, Toggle, ToggleVariants as _};
@@ -133,8 +132,8 @@ impl NewReminderView {
         let body = cx.new(|cx| TextareaState::new(window, cx).placeholder("Notes"));
         let due = cx.new(|cx| {
             let mut state = DatePickerState::new(window, cx).time_precision(TimePrecision::Minute);
-            if let Some(due) = defaults.due.and_then(to_naive) {
-                state.set_date_time(due, window, cx);
+            if let Some(due) = defaults.due {
+                state.set_date_time(to_minute(due), window, cx);
             }
             state
         });
@@ -236,7 +235,7 @@ impl NewReminderView {
         let body = SharedString::from(draft.body.clone());
         self.body
             .update(cx, |input, cx| input.set_value(body, window, cx));
-        let due = draft.due.and_then(to_naive);
+        let due = draft.due.map(to_minute);
         self.due.update(cx, |picker, cx| {
             picker.set_date_time(PickedDateTime::Single(due), window, cx);
         });
@@ -294,7 +293,7 @@ impl NewReminderView {
             .selected_value()
             .and_then(|&level| Priority::from_level(level));
         let due = match self.due.read(cx).date_time() {
-            PickedDateTime::Single(due) => due.and_then(from_naive),
+            PickedDateTime::Single(due) => due.map(to_minute),
             PickedDateTime::Range(..) => None,
         };
         Draft {
@@ -435,30 +434,9 @@ fn index_id(ix: usize) -> i64 {
     i64::try_from(ix).unwrap_or(i64::MAX)
 }
 
-fn to_naive(at: DateTime) -> Option<NaiveDateTime> {
-    NaiveDate::from_ymd_opt(
-        at.year().into(),
-        at.month().unsigned_abs().into(),
-        at.day().unsigned_abs().into(),
-    )?
-    .and_hms_opt(
-        at.hour().unsigned_abs().into(),
-        at.minute().unsigned_abs().into(),
-        0,
-    )
-}
-
-fn from_naive(at: NaiveDateTime) -> Option<DateTime> {
-    DateTime::new(
-        i16::try_from(at.year()).ok()?,
-        i8::try_from(at.month()).ok()?,
-        i8::try_from(at.day()).ok()?,
-        i8::try_from(at.hour()).ok()?,
-        i8::try_from(at.minute()).ok()?,
-        0,
-        0,
-    )
-    .ok()
+/// `at` without seconds, matching the picker's minute precision.
+fn to_minute(at: DateTime) -> DateTime {
+    at.date().at(at.hour(), at.minute(), 0, 0)
 }
 
 impl Render for NewReminderView {
@@ -934,9 +912,9 @@ mod tests {
     }
 
     #[test]
-    fn converts_picker_times() {
-        let naive = to_naive(now()).unwrap();
-        assert_eq!(naive.to_string(), "2026-11-16 09:30:00");
-        assert_eq!(from_naive(naive), Some(now()));
+    fn truncates_picker_times_to_minutes() {
+        assert_eq!(to_minute(now()), now());
+        let with_seconds = now().date().at(9, 30, 45, 123);
+        assert_eq!(to_minute(with_seconds), now());
     }
 }
