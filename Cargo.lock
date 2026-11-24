@@ -8207,6 +8207,7 @@ dependencies = [
  "new-reminder-ui",
  "overview-ui",
  "preferences",
+ "project-editor-ui",
  "projects-ui",
  "reminder-details",
  "reminder-details-ui",

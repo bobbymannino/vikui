@@ -18,6 +18,7 @@ login-ui.workspace = true
 new-reminder.workspace = true
 new-reminder-ui.workspace = true
 overview-ui.workspace = true
+project-editor-ui.workspace = true
 projects-ui.workspace = true
 reminder-details.workspace = true
 reminder-details-ui.workspace = true

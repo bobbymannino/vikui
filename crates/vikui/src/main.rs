@@ -11,6 +11,7 @@ mod app_windows;
 mod edit_task_window;
 mod labels_window;
 mod new_reminder_window;
+mod project_editor_window;
 mod projects_menu;
 mod reminders_window;
 mod settings_window;
@@ -23,7 +24,7 @@ use std::sync::Arc;
 
 use app_windows::WindowKind;
 use gpui_kit::component::Theme;
-use gpui_kit::{AnyWindowHandle, App, AppContext as _};
+use gpui_kit::{AnyWindowHandle, App, AppContext as _, Global, WeakEntity};
 use login::{Credentials, Session};
 use login_ui::Prompt;
 use overview_ui::OverviewEvent;
@@ -52,6 +53,7 @@ fn main() {
         reminders_ui::init(cx);
         new_reminder_ui::init(cx);
         labels_ui::init(cx);
+        project_editor_ui::init(cx);
         // Last, so the menus show every key binding.
         app_menu::init(cx);
         Theme::sync_system_appearance(None, cx);
@@ -127,6 +129,34 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
     );
 }
 
+/// The main window's projects list, to reload after a project or filter changes.
+#[derive(Default)]
+struct MainProjects(Option<WeakEntity<ProjectsView>>);
+
+impl Global for MainProjects {}
+
+/// Load the main window's projects (and so the Projects menu) again, if it is open.
+fn reload_projects(cx: &mut App) {
+    let Some(view) = cx
+        .try_global::<MainProjects>()
+        .and_then(|main| main.0.as_ref())
+        .and_then(WeakEntity::upgrade)
+    else {
+        return;
+    };
+    let Some(handle) = app_windows::find(WindowKind::Main, cx) else {
+        return;
+    };
+    // Deferred: the save that asks may finish while another window is updating.
+    cx.defer(move |cx| {
+        handle
+            .update(cx, |_, window, cx| {
+                view.update(cx, |view, cx| view.refresh(window, cx));
+            })
+            .ok();
+    });
+}
+
 /// Bring the main window, which lists the projects, to the front, or reopen it if it was
 /// closed. Signed out, the sign-in window stands in for it.
 fn open_projects(cx: &mut App) {
@@ -176,6 +206,7 @@ fn open_main_window(signed_in: app_session::SignedIn, cx: &mut App) {
             view.set_table_layout(&layout, cx);
             view
         });
+        cx.set_global(MainProjects(Some(view.downgrade())));
         cx.subscribe(&view, move |_, event, cx| {
             let source = match event {
                 ProjectsEvent::SessionExpired => return expire(cx),

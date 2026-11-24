@@ -97,6 +97,9 @@ Pick what double-clicking a reminder does on the **Reminders** tab of **Settings
 its details in a new window (the default), edit the task, mark it done or not done, or
 open it in the browser.
 
+Create projects and change their name, identifier, colour, description or parent: choose
+**Edit Projects…** from the **Projects** menu.
+
 Create labels and change their name or colour in the labels window: choose **Open
 Labels Window** from the **Window** menu. Vikunja lets only a label's creator change it,
 so a label shared with you through a task can't be saved.

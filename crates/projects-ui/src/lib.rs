@@ -210,6 +210,12 @@ impl ProjectsView {
     }
 
     fn on_refresh(&mut self, _: &Refresh, window: &mut Window, cx: &mut Context<Self>) {
+        self.refresh(window, cx);
+    }
+
+    /// Load the projects again, e.g. after one was created or changed elsewhere. Does
+    /// nothing while a load is under way.
+    pub fn refresh(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if !self.loading {
             self.reload(window, cx);
         }
