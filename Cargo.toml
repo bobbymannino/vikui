@@ -20,6 +20,7 @@ new-reminder = { path = "crates/new-reminder" }
 new-reminder-ui = { path = "crates/new-reminder-ui" }
 overview-ui = { path = "crates/overview-ui" }
 preferences = { path = "crates/preferences" }
+project-editor-ui = { path = "crates/project-editor-ui" }
 projects-ui = { path = "crates/projects-ui" }
 reminder-details = { path = "crates/reminder-details" }
 reminder-details-ui = { path = "crates/reminder-details-ui" }
