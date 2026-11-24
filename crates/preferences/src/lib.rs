@@ -34,6 +34,9 @@ pub struct Preferences {
     pub windows: BTreeMap<String, WindowPlacement>,
     /// The reminders shown from the menu bar (macOS) or notification area (Windows).
     pub tray: TrayPreferences,
+    /// When the app starts at login (which the system keeps), show only the tray icon
+    /// rather than the main window.
+    pub login_opens_tray: bool,
 }
 
 impl Default for Preferences {
@@ -45,6 +48,7 @@ impl Default for Preferences {
             tables: Tables::default(),
             windows: BTreeMap::new(),
             tray: TrayPreferences::default(),
+            login_opens_tray: false,
         }
     }
 }
