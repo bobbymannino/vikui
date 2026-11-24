@@ -45,6 +45,9 @@ impl TaskQuery {
 pub struct SavedFilter {
     pub id: i64,
     pub title: String,
+    /// Rich text (HTML).
+    #[serde(default)]
+    pub description: String,
     #[serde(default)]
     pub filters: SavedQuery,
 }
