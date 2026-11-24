@@ -84,6 +84,14 @@ pub fn apply(preferences: &ThemePreferences, cx: &mut App) {
     Theme::change(mode, None::<&mut Window>, cx);
 }
 
+/// Save a change to the theme preferences, show it, and check it in the menu bar.
+pub fn change(cx: &mut App, change: impl FnOnce(&mut ThemePreferences)) {
+    crate::app_preferences::update(cx, |preferences| change(&mut preferences.theme));
+    let theme = crate::app_preferences::get(cx).theme;
+    apply(&theme, cx);
+    crate::app_menu::refresh(cx);
+}
+
 /// The light and dark themes currently shown, by name.
 pub fn current(cx: &App) -> (SharedString, SharedString) {
     let theme = Theme::global(cx);

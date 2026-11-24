@@ -14,7 +14,8 @@ use crate::app_actions::{
 use crate::app_actions::{Hide, HideOthers, ShowAll};
 
 /// Install the menu bar. Call after [`crate::app_actions::init`] and
-/// [`crate::projects_menu::init`], so the menus pick up their key bindings.
+/// [`crate::projects_menu::init`], so the menus pick up their key bindings, and after
+/// [`crate::app_theme::init`], so the Theme submenu lists every theme.
 pub fn init(cx: &mut App) {
     refresh(cx);
 }
@@ -22,10 +23,11 @@ pub fn init(cx: &mut App) {
 /// Rebuild the menu bar, e.g. after the projects listed in it change.
 pub fn refresh(cx: &mut App) {
     let projects = crate::projects_menu::items(cx);
-    cx.set_menus(menus(projects));
+    let theme = crate::theme_menu::submenu(cx);
+    cx.set_menus(menus(projects, theme));
 }
 
-fn menus(projects: Vec<MenuItem>) -> Vec<Menu> {
+fn menus(projects: Vec<MenuItem>, theme: MenuItem) -> Vec<Menu> {
     vec![
         app_menu(),
         Menu::new("File").items([
@@ -44,7 +46,11 @@ fn menus(projects: Vec<MenuItem>) -> Vec<Menu> {
             MenuItem::separator(),
             MenuItem::action("Search All Tasks…", SearchAllTasks),
         ]),
-        Menu::new("View").items([MenuItem::action("Refresh", Refresh)]),
+        Menu::new("View").items([
+            MenuItem::action("Refresh", Refresh),
+            MenuItem::separator(),
+            theme,
+        ]),
         Menu::new("Projects").items(projects),
         Menu::new("Window").items([
             MenuItem::action("Minimize", Minimize),
@@ -102,7 +108,7 @@ mod tests {
 
     #[test]
     fn has_the_standard_menus() {
-        let menus = menus(Vec::new());
+        let menus = menus(Vec::new(), MenuItem::submenu(Menu::new("Theme")));
         let titles: Vec<&str> = menus.iter().map(|menu| menu.name.as_ref()).collect();
         assert_eq!(
             titles,
