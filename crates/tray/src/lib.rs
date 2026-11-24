@@ -32,6 +32,8 @@ pub enum Command {
     Quit,
 }
 
+// Only the tray's menu reads ids, so other platforms need these just for the tests.
+#[cfg(any(target_os = "macos", target_os = "windows", test))]
 impl Command {
     /// The menu item id that carries the command.
     fn id(self) -> String {
@@ -96,7 +98,11 @@ impl Tray {
     /// If the platform has no tray (see [`is_supported`]) or refuses the icon.
     pub fn new(tooltip: &str) -> Result<Self, Error> {
         let (sender, commands) = async_channel::unbounded();
-        imp::new(tooltip, sender).map(|icon| Self {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let icon = imp::new(tooltip, sender)?;
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        imp::new(tooltip, sender)?;
+        Ok(Self {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             icon,
             commands,
@@ -110,6 +116,10 @@ impl Tray {
     }
 
     /// Replace the menu with `entries`.
+    #[cfg_attr(
+        not(any(target_os = "macos", target_os = "windows")),
+        expect(clippy::unused_self, reason = "there is no tray icon to change here")
+    )]
     pub fn set_menu(&self, entries: &[Entry]) {
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         imp::set_menu(&self.icon, entries);
@@ -119,6 +129,10 @@ impl Tray {
 
     /// Show `count` beside the icon (macOS) and `tooltip` when hovering it; `None` shows
     /// no count.
+    #[cfg_attr(
+        not(any(target_os = "macos", target_os = "windows")),
+        expect(clippy::unused_self, reason = "there is no tray icon to change here")
+    )]
     pub fn set_count(&self, count: Option<usize>, tooltip: &str) {
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         imp::set_count(&self.icon, count, tooltip);
@@ -158,11 +172,11 @@ mod imp {
                 let _ = sender.try_send(command);
             }
         }));
-        let builder = if STYLE == icon::Style::Template {
-            TrayIconBuilder::new().with_icon_templated(image)
-        } else {
-            TrayIconBuilder::new().with_icon(image)
-        };
+        // Only macOS has template images.
+        #[cfg(target_os = "macos")]
+        let builder = TrayIconBuilder::new().with_icon_templated(image);
+        #[cfg(target_os = "windows")]
+        let builder = TrayIconBuilder::new().with_icon(image);
         builder
             .with_tooltip(tooltip)
             .with_menu(Box::new(Menu::new()))
