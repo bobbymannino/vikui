@@ -26,13 +26,13 @@ pub enum Error {
 pub struct Autostart(AutoLaunch);
 
 impl Autostart {
-    /// For the running app.
+    /// For the running app, started at login with `args`.
     ///
     /// # Errors
     /// If the app's own path can't be found.
-    pub fn new(id: &str) -> Result<Self, Error> {
+    pub fn new(id: &str, args: &[&str]) -> Result<Self, Error> {
         let exe = std::env::current_exe().map_err(Error::AppPath)?;
-        let (program, args) = launch_command(&exe);
+        let (program, args) = launch_command(&exe, args);
         let mut builder = AutoLaunchBuilder::new();
         builder
             .set_app_name(id)
@@ -52,7 +52,8 @@ impl Autostart {
         Ok(self.0.is_enabled()?)
     }
 
-    /// Start the app at login, or stop doing so.
+    /// Start the app at login, or stop doing so. Turning it on again replaces the entry,
+    /// e.g. to change its arguments.
     ///
     /// # Errors
     /// If the system's setting can't be changed.
@@ -66,15 +67,21 @@ impl Autostart {
     }
 }
 
-/// What to run at login for the executable at `exe`: inside a macOS app bundle, `open`
-/// on the bundle, so it starts as an app does from Finder; otherwise the executable.
-fn launch_command(exe: &Path) -> (PathBuf, Vec<String>) {
+/// What to run at login for the executable at `exe` with `args`: inside a macOS app
+/// bundle, `open` on the bundle, so it starts as an app does from Finder; otherwise the
+/// executable.
+fn launch_command(exe: &Path, args: &[&str]) -> (PathBuf, Vec<String>) {
+    let args = args.iter().map(|arg| (*arg).to_owned());
     match app_bundle(exe) {
-        Some(bundle) if cfg!(target_os = "macos") => (
-            PathBuf::from("/usr/bin/open"),
-            vec![bundle.to_string_lossy().into_owned()],
-        ),
-        _ => (exe.to_path_buf(), Vec::new()),
+        Some(bundle) if cfg!(target_os = "macos") => {
+            let mut open = vec![bundle.to_string_lossy().into_owned()];
+            if args.len() > 0 {
+                open.push("--args".into());
+                open.extend(args);
+            }
+            (PathBuf::from("/usr/bin/open"), open)
+        }
+        _ => (exe.to_path_buf(), args.collect()),
     }
 }
 
@@ -104,15 +111,21 @@ mod tests {
     #[test]
     fn opens_the_bundle_on_macos_and_runs_the_executable_elsewhere() {
         let exe = Path::new("/Applications/Vikui.app/Contents/MacOS/vikui");
-        let (program, args) = launch_command(exe);
+        let (program, args) = launch_command(exe, &[]);
+        let (_, with_args) = launch_command(exe, &["--tray"]);
         if cfg!(target_os = "macos") {
             assert_eq!(program, Path::new("/usr/bin/open"));
             assert_eq!(args, ["/Applications/Vikui.app"]);
+            assert_eq!(with_args, ["/Applications/Vikui.app", "--args", "--tray"]);
         } else {
             assert_eq!(program, exe);
             assert_eq!(args, Vec::<String>::new());
+            assert_eq!(with_args, ["--tray"]);
         }
         let loose = Path::new("/home/me/vikui/vikui");
-        assert_eq!(launch_command(loose), (loose.to_path_buf(), Vec::new()));
+        assert_eq!(
+            launch_command(loose, &["--tray"]),
+            (loose.to_path_buf(), vec!["--tray".to_owned()])
+        );
     }
 }
