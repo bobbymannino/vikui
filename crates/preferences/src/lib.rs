@@ -32,6 +32,8 @@ pub struct Preferences {
     pub tables: Tables,
     /// Where each kind of window was last, by a stable name such as `"main"`.
     pub windows: BTreeMap<String, WindowPlacement>,
+    /// The reminders shown from the menu bar (macOS) or notification area (Windows).
+    pub tray: TrayPreferences,
 }
 
 impl Default for Preferences {
@@ -42,6 +44,7 @@ impl Default for Preferences {
             reminder_double_click: DoubleClickAction::default(),
             tables: Tables::default(),
             windows: BTreeMap::new(),
+            tray: TrayPreferences::default(),
         }
     }
 }
@@ -66,6 +69,45 @@ pub enum Appearance {
     /// Follow the system's appearance as it changes.
     #[default]
     Auto,
+}
+
+/// The tray icon: whether it shows, and which reminders its menu lists.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct TrayPreferences {
+    pub enabled: bool,
+    /// Where its reminders come from; `None` until the user picks one.
+    pub source: Option<TraySource>,
+    /// List at most this many reminders; `None` for all of them.
+    pub limit: Option<u32>,
+    /// Show how many upcoming reminders there are beside the icon (macOS) or in its
+    /// tooltip (Windows).
+    pub show_count: bool,
+}
+
+/// A project or saved filter the tray lists reminders from. The title is kept to name
+/// it before the projects load (and if it is gone from the server).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(tag = "kind", rename_all = "kebab-case")]
+pub enum TraySource {
+    /// A project, with its subprojects.
+    Project {
+        id: i64,
+        title: String,
+    },
+    SavedFilter {
+        filter_id: i64,
+        title: String,
+    },
+}
+
+impl TraySource {
+    #[must_use]
+    pub fn title(&self) -> &str {
+        match self {
+            Self::Project { title, .. } | Self::SavedFilter { title, .. } => title,
+        }
+    }
 }
 
 /// What double-clicking a reminder does.
@@ -213,6 +255,27 @@ mod tests {
             }),
         };
         preferences.save_to(&path).unwrap();
+        assert_eq!(Preferences::load_from(&path), preferences);
+    }
+
+    #[test]
+    fn saves_and_loads_the_tray() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join(FILE);
+        let mut preferences = Preferences::default();
+        assert!(!preferences.tray.enabled, "off until the user turns it on");
+        preferences.tray = TrayPreferences {
+            enabled: true,
+            source: Some(TraySource::SavedFilter {
+                filter_id: 3,
+                title: "This week".into(),
+            }),
+            limit: Some(5),
+            show_count: true,
+        };
+        preferences.save_to(&path).unwrap();
+        let saved = fs::read_to_string(&path).unwrap();
+        assert!(saved.contains(r#""kind": "saved-filter""#), "{saved}");
         assert_eq!(Preferences::load_from(&path), preferences);
     }
 
