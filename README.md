@@ -86,6 +86,11 @@ for Updates…** from the Vikui menu or the button there. Click **Update to <ver
 Restart**: Vikui downloads it, checks its SHA-256 checksum, replaces itself and
 relaunches. Prereleases are never offered.
 
+Turn on **Start Vikui at login** on the **General** tab of **Settings** to have it open
+when you log in: a launch agent in `~/Library/LaunchAgents` on macOS, a `Run` registry
+entry on Windows and an autostart entry in `~/.config/autostart` on Linux. Together with
+the tray icon, your reminders are in the menu bar from the moment you sign in.
+
 Pick an appearance on the **Appearance** tab of **Settings**: **Light**, **Dark** or
 **Auto**, which follows the system as it switches. Pick the theme shown while light and
 the one shown while dark from the themes GPUI Kit publishes (Solarized, Catppuccin,

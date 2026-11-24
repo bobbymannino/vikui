@@ -23,6 +23,7 @@ Vikui: a cross-platform GPUI desktop client for Vikunja (see `README.md`).
 - `crates/filter-editor-ui`: window to create and edit saved filters (name, query, description); reports saves via events, never saves.
 - `crates/settings-ui`: settings window; shows the app info and update status it is given, reports update requests via events.
 - `crates/preferences`: loads and saves the user's preferences file, no UI.
+- `crates/autostart`: starts the app at login (or stops), using the system's own setting, no UI.
 - `crates/updater`: checks GitHub releases and installs an update in place, no UI.
 - `crates/table-layout`: a table's column order, widths and sort, kept while shown and saved between runs, no UI.
 - `crates/tray`: the tray icon (menu bar on macOS, notification area on Windows, none on Linux) and its menu, built from entries the app gives; no GPUI.
