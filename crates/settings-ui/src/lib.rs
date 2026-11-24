@@ -1,11 +1,12 @@
 //! Vikui's settings window.
 //!
-//! One tab per [`SettingsTab`]: Appearance lets the user pick the appearance and colour
+//! One tab per [`SettingsTab`]: General lets the user start the app at login, Appearance
+//! pick the appearance and colour
 //! themes, Reminders what double-clicking a reminder does, Updates lets them update the
 //! app, and About shows what the app is (its name, version and a link to its source) and
 //! links to report a bug or request a feature. The
 //! app supplies [`About`], the [`ThemeChoices`], the [`DoubleClickAction`] and the
-//! [`UpdateStatus`] (and, for the Tray tab, [`TraySettingsView`]'s choices), and applies
+//! [`UpdateStatus`], whether it [`StartAtLogin`] (and, for the Tray tab, [`TraySettingsView`]'s choices), and applies
 //! and saves changes, checks and installs when the view asks
 //! through [`SettingsEvent`]; this crate never fetches or saves. The app can bring a tab
 //! forward with [`SettingsView::set_tab`], e.g. Updates when one is available.
@@ -155,10 +156,32 @@ impl DoubleClickAction {
     }
 }
 
+/// Whether the app starts at login, as the system has it.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub enum StartAtLogin {
+    /// Not read yet, or being changed.
+    #[default]
+    Unknown,
+    On,
+    Off,
+    /// Reading or changing it failed; it stands at `on` as far as is known.
+    Failed {
+        on: bool,
+        message: SharedString,
+    },
+}
+
+impl StartAtLogin {
+    fn is_on(&self) -> bool {
+        matches!(self, Self::On | Self::Failed { on: true, .. })
+    }
+}
+
 /// A tab of the settings window.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum SettingsTab {
     #[default]
+    General,
     Appearance,
     Reminders,
     Tray,
@@ -168,7 +191,8 @@ pub enum SettingsTab {
 
 impl SettingsTab {
     /// In the order the tab bar shows them.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
+        Self::General,
         Self::Appearance,
         Self::Reminders,
         Self::Tray,
@@ -178,6 +202,7 @@ impl SettingsTab {
 
     fn label(self) -> &'static str {
         match self {
+            Self::General => "General",
             Self::Appearance => "Appearance",
             Self::Reminders => "Reminders",
             Self::Tray => "Tray",
@@ -189,6 +214,7 @@ impl SettingsTab {
     /// The accessible name of the tab's panel.
     fn panel_label(self) -> &'static str {
         match self {
+            Self::General => "General settings",
             Self::Appearance => "Appearance settings",
             Self::Reminders => "Reminder settings",
             Self::Tray => "Tray settings",
@@ -221,6 +247,9 @@ pub enum SettingsEvent {
     SetReminderDoubleClick(DoubleClickAction),
     /// The user changed the tray's settings; apply and save them.
     SetTray(TraySettings),
+    /// The user turned starting the app at login on or off; change it, then call
+    /// [`SettingsView::set_start_at_login`] with how it stands.
+    SetStartAtLogin(bool),
 }
 
 /// The settings view.
@@ -236,6 +265,7 @@ pub struct SettingsView {
     light_theme: Entity<ThemeSelect>,
     dark_theme: Entity<ThemeSelect>,
     tray: Entity<TraySettingsView>,
+    start_at_login: StartAtLogin,
     _subscriptions: [Subscription; 3],
 }
 
@@ -299,6 +329,7 @@ impl SettingsView {
             light_theme,
             dark_theme,
             tray,
+            start_at_login: StartAtLogin::default(),
             _subscriptions: [light_events, dark_events, tray_events],
         }
     }
@@ -415,6 +446,62 @@ impl SettingsView {
             cx.emit(SettingsEvent::SetReminderDoubleClick(action));
             cx.notify();
         }
+    }
+
+    #[must_use]
+    pub fn start_at_login(&self) -> &StartAtLogin {
+        &self.start_at_login
+    }
+
+    /// Show whether the app starts at login, e.g. once read from the system.
+    pub fn set_start_at_login(&mut self, state: StartAtLogin, cx: &mut Context<Self>) {
+        if self.start_at_login != state {
+            self.start_at_login = state;
+            cx.notify();
+        }
+    }
+
+    fn toggle_start_at_login(&mut self, on: bool, cx: &mut Context<Self>) {
+        if self.start_at_login != StartAtLogin::Unknown && self.start_at_login.is_on() != on {
+            // Unknown until the app reports the change made.
+            self.start_at_login = StartAtLogin::Unknown;
+            cx.emit(SettingsEvent::SetStartAtLogin(on));
+            cx.notify();
+        }
+    }
+
+    fn render_general(&self, cx: &mut Context<Self>) -> impl IntoElement {
+        let label = format!("Start {} at login", self.about.name);
+        v_flex()
+            .id("settings-general")
+            .gap_2()
+            .child(
+                Switch::new("start-at-login")
+                    .checked(self.start_at_login.is_on())
+                    .disabled(self.start_at_login == StartAtLogin::Unknown)
+                    .label(label.clone())
+                    .accessibility_label(label)
+                    .on_change(cx.listener(|this, on: &bool, _, cx| {
+                        this.toggle_start_at_login(*on, cx);
+                    })),
+            )
+            .when_some(
+                match &self.start_at_login {
+                    StartAtLogin::Failed { message, .. } => Some(message.clone()),
+                    _ => None,
+                },
+                |panel, message| {
+                    panel.child(
+                        div()
+                            .id("start-at-login-error")
+                            .role(Role::Alert)
+                            .aria_label(message.clone())
+                            .test_support()
+                            .text_color(cx.theme().danger)
+                            .child(message),
+                    )
+                },
+            )
     }
 
     fn render_reminders(&self, cx: &mut Context<Self>) -> impl IntoElement {
@@ -598,6 +685,7 @@ impl Render for SettingsView {
                 }
             }));
         let panel = match self.tab {
+            SettingsTab::General => self.render_general(cx).into_any_element(),
             SettingsTab::Appearance => self.render_appearance(cx).into_any_element(),
             SettingsTab::Reminders => self.render_reminders(cx).into_any_element(),
             SettingsTab::Tray => self.tray.clone().into_any_element(),
@@ -828,7 +916,7 @@ mod tests {
         });
 
         cx.update_window(handle, |_, window, cx| {
-            window.render_frame(cx);
+            click_tab(window, SettingsTab::Appearance, cx);
             window.find_by_label("Appearance");
             window.find_by_label("Light theme");
             window.find_by_label("Dark theme");
@@ -925,6 +1013,70 @@ mod tests {
     }
 
     #[gpui_kit::test]
+    fn toggles_starting_at_login_once_its_state_is_known(cx: &mut TestAppContext) {
+        let about = about();
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            open(
+                WindowOptions::default(),
+                about,
+                true,
+                ThemeChoices::default(),
+                cx,
+            )
+            .unwrap()
+        });
+        let events = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = std::rc::Rc::clone(&events);
+            cx.subscribe(&view, move |_, event, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        let toggle = |cx: &mut TestAppContext| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.find_by_label("Start Vikui at login");
+                window.click("start-at-login", cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        let state =
+            |cx: &mut TestAppContext| cx.update(|cx| view.read(cx).start_at_login().clone());
+
+        // Not read from the system yet: clicking does nothing.
+        toggle(cx);
+        assert!(events.borrow().is_empty());
+
+        cx.update(|cx| {
+            view.update(cx, |view, cx| {
+                view.set_start_at_login(StartAtLogin::Off, cx);
+            });
+        });
+        toggle(cx);
+        assert_eq!(*events.borrow(), [SettingsEvent::SetStartAtLogin(true)]);
+        assert_eq!(
+            state(cx),
+            StartAtLogin::Unknown,
+            "until the app says it changed"
+        );
+
+        let failed = StartAtLogin::Failed {
+            on: false,
+            message: "Couldn't start Vikui at login: denied".into(),
+        };
+        cx.update(|cx| view.update(cx, |view, cx| view.set_start_at_login(failed, cx)));
+        cx.update_window(handle, |_, window, cx| {
+            window.render_frame(cx);
+            let alert = window.find_by_label("Couldn't start Vikui at login: denied");
+            assert_eq!(alert.role(), Some(Role::Alert));
+        })
+        .unwrap();
+    }
+
+    #[gpui_kit::test]
     fn toggles_checking_for_updates_on_open(cx: &mut TestAppContext) {
         let about = about();
         let (handle, view) = cx.update(|cx| {
@@ -999,26 +1151,28 @@ mod tests {
             .unwrap()
         };
 
-        // Appearance first; the other tabs' controls are not shown.
-        assert_eq!(tab(cx), SettingsTab::Appearance);
+        // General first; the other tabs' controls are not shown.
+        assert_eq!(tab(cx), SettingsTab::General);
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             let tabs = window.find_all_by_role(Role::Tab);
-            assert_eq!(tabs.len(), 5);
+            assert_eq!(tabs.len(), 6);
             assert_eq!(
                 window.within("settings-tabs").find(0_usize).selected(),
                 Some(true)
             );
+            window.find_by_label("General");
             window.find_by_label("Appearance");
             window.find_by_label("Reminders");
             window.find_by_label("Tray");
             window.find_by_label("Updates");
             window.find_by_label("About");
-            window.find_by_label("Appearance settings");
+            window.find_by_label("General settings");
             assert_eq!(window.find_all_by_role(Role::TabPanel).len(), 1);
         })
         .unwrap();
-        assert!(shows(cx, "Light theme"));
+        assert!(shows(cx, "Start Vikui at login"));
+        assert!(!shows(cx, "Light theme"));
         assert!(!shows(cx, "Check for Updates"));
         assert!(!shows(cx, "Version 1.2.3"));
 
