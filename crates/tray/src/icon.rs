@@ -168,11 +168,11 @@ fn colour_at(style: Style, point: (f32, f32)) -> Option<Rgba> {
 /// The icon as `size` × `size` straight RGBA bytes, row by row.
 #[must_use]
 pub fn draw(style: Style, size: u32) -> Vec<u8> {
-    // The template is a bare glyph, so it is cropped to the tile's area to fill the
+    // The template is a bare glyph, so it is cropped to the check and dot to fill the
     // menu bar's height; the coloured icon keeps the app icon's margin.
-    let (origin, span) = match style {
-        Style::Template => (100., 824.),
-        Style::Colour => (0., 1024.),
+    let ((left, top), span) = match style {
+        Style::Template => ((255., 170.), 600.),
+        Style::Colour => ((0., 0.), 1024.),
     };
     #[expect(clippy::cast_precision_loss, reason = "icon sizes are tiny")]
     let (scale, samples) = (span / size as f32, (SAMPLES * SAMPLES) as f32);
@@ -185,8 +185,8 @@ pub fn draw(style: Style, size: u32) -> Vec<u8> {
                 for sx in 0..SAMPLES {
                     #[expect(clippy::cast_precision_loss, reason = "icon sizes are tiny")]
                     let point = (
-                        ((col * SAMPLES + sx) as f32 + 0.5).mul_add(scale / SAMPLES as f32, origin),
-                        ((row * SAMPLES + sy) as f32 + 0.5).mul_add(scale / SAMPLES as f32, origin),
+                        ((col * SAMPLES + sx) as f32 + 0.5).mul_add(scale / SAMPLES as f32, left),
+                        ((row * SAMPLES + sy) as f32 + 0.5).mul_add(scale / SAMPLES as f32, top),
                     );
                     if let Some(colour) = colour_at(style, point) {
                         sum.r += colour.r * colour.a;
@@ -236,10 +236,10 @@ mod tests {
         let pixels = draw(Style::Template, size);
         assert_eq!(pixels.len(), (size * size * 4) as usize);
         // A corner is empty; the check's elbow and the dot (SVG (460, 670) and
-        // (772, 252), cropped to the tile and scaled to 36px) are solid black.
-        assert_eq!(pixel(&pixels, size, 0, 0), [0, 0, 0, 0]);
-        assert_eq!(pixel(&pixels, size, 15, 24), [0, 0, 0, 255]);
-        assert_eq!(pixel(&pixels, size, 29, 6), [0, 0, 0, 255]);
+        // (772, 252), cropped and scaled to 36px) are solid black.
+        assert_eq!(pixel(&pixels, size, 0, 35), [0, 0, 0, 0]);
+        assert_eq!(pixel(&pixels, size, 12, 30), [0, 0, 0, 255]);
+        assert_eq!(pixel(&pixels, size, 31, 4), [0, 0, 0, 255]);
         // Every pixel is black, only its alpha varies.
         assert!(pixels.chunks(4).all(|p| p.starts_with(&[0, 0, 0])));
     }
