@@ -1,7 +1,7 @@
 //! The tray icon (menu bar on macOS, notification area on Windows): lists the reminders
 //! from the project or saved filter picked in Settings, optionally with their count.
 //!
-//! It shows while it is turned on and the user is signed in, reloads every few minutes
+//! It shows while it is turned on and the user is signed in, reloads every two minutes
 //! and whenever the reminders windows do, and keeps the app running with no windows
 //! open. Linux has no tray (see the `tray` crate), so there it never shows.
 
@@ -17,7 +17,7 @@ use tray::{Command, Entry, Tray};
 use crate::app_session;
 
 /// How often the reminders reload by themselves, so new and passed ones show.
-const RELOAD_EVERY: Duration = Duration::from_mins(5);
+const RELOAD_EVERY: Duration = Duration::from_mins(2);
 
 /// The icon while it shows, and what keeps it up to date.
 struct Shown {
