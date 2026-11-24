@@ -13,8 +13,8 @@ use gpui_kit::{AnyWindowHandle, App, AppContext as _, Entity, Global, WeakEntity
 use preferences::{Appearance, DoubleClickAction, TrayPreferences, TraySource};
 use reminders::Source;
 use settings_ui::{
-    About, SettingsEvent, SettingsTab, SettingsView, ThemeChoices, TraySettings, TraySourceChoice,
-    TraySourceId, UpdateStatus,
+    About, SettingsEvent, SettingsTab, SettingsView, StartAtLogin, ThemeChoices, TraySettings,
+    TraySourceChoice, TraySourceId, UpdateStatus,
 };
 use updater::{Release, Updater};
 
@@ -211,6 +211,53 @@ fn save_tray(settings: &TraySettings, cx: &mut App) {
     crate::app_tray::apply(cx);
 }
 
+/// Turn starting the app at login on or off (`change`), or just read it, then show how it
+/// stands in `view`. The system keeps the setting; reading and changing it block, so they
+/// run in the background.
+fn start_at_login(view: WeakEntity<SettingsView>, change: Option<bool>, cx: &mut App) {
+    let work = cx.background_spawn(async move {
+        let autostart = autostart::Autostart::new(crate::APP_ID)?;
+        let failed = change.and_then(|on| autostart.set_enabled(on).err());
+        Ok::<_, autostart::Error>((autostart.is_enabled()?, failed))
+    });
+    cx.spawn(async move |cx| {
+        let result = work.await;
+        cx.update(|cx| {
+            let state = match result {
+                Ok((on, None)) => {
+                    if on {
+                        StartAtLogin::On
+                    } else {
+                        StartAtLogin::Off
+                    }
+                }
+                Ok((on, Some(err))) => {
+                    log::warn!("couldn't change starting at login: {err}");
+                    StartAtLogin::Failed {
+                        on,
+                        message: format!("Couldn't change starting at login: {err}").into(),
+                    }
+                }
+                Err(err) => {
+                    log::warn!("couldn't read starting at login: {err}");
+                    StartAtLogin::Failed {
+                        on: false,
+                        message: format!(
+                            "Couldn't read whether {} starts at login: {err}",
+                            crate::APP_NAME
+                        )
+                        .into(),
+                    }
+                }
+            };
+            if let Some(view) = view.upgrade() {
+                view.update(cx, |view, cx| view.set_start_at_login(state, cx));
+            }
+        });
+    })
+    .detach();
+}
+
 /// Open the settings window on its Updates tab and check for updates.
 pub fn check_for_updates(cx: &mut App) {
     if let Some((opened, _)) = open_view(cx) {
@@ -292,6 +339,7 @@ fn open_view(cx: &mut App) -> Option<(Opened, bool)> {
         })
         .ok();
     crate::app_windows::track(crate::app_windows::WindowKind::Settings, handle, cx);
+    start_at_login(view.downgrade(), None, cx);
     let opened = Opened {
         handle,
         view: view.downgrade(),
@@ -358,6 +406,9 @@ impl Updates {
                 crate::reminders_window::set_double_click(action, cx);
             }
             SettingsEvent::SetTray(settings) => save_tray(settings, cx),
+            &SettingsEvent::SetStartAtLogin(on) => {
+                start_at_login(updates.view.clone(), Some(on), cx);
+            }
         })
         .detach();
         this
