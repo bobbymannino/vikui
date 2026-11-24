@@ -89,9 +89,12 @@ pub fn init(cx: &mut App) {
     // `KeyBinding::new` only accepts explicit modifiers; `load` resolves `secondary-`
     // to Cmd on macOS and Ctrl elsewhere.
     let context = KeyBindingContextPredicate::parse(CONTEXT).ok().map(Rc::new);
-    let bindings: [(&str, Box<dyn gpui_kit::Action>); 2] = [
+    let bindings: [(&str, Box<dyn gpui_kit::Action>); 3] = [
         ("secondary-r", Box::new(Refresh)),
         ("secondary-f", Box::new(FocusSearch)),
+        // T only works with the list focused, so it can be typed in the search field;
+        // Mod+D works anywhere in the window, e.g. from the details panel.
+        ("secondary-d", Box::new(ToggleDone)),
     ];
     for (keystrokes, action) in bindings {
         match KeyBinding::load(keystrokes, action, context.clone(), false, None, cx) {
@@ -1321,6 +1324,47 @@ mod tests {
                     done: false
                 },
             ]
+        );
+    }
+
+    #[gpui_kit::test]
+    fn mod_d_toggles_the_selected_task_from_the_search_field(cx: &mut TestAppContext) {
+        let soon = Timestamp::now() + jiff::SignedDuration::from_hours(24);
+        let (handle, view) = cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            let reminders = vec![reminder(soon, "Pay rent")];
+            open(options(), "Reminders – Home", Some(reminders), cx).unwrap()
+        });
+        let events = Rc::new(RefCell::new(Vec::new()));
+        cx.update(|cx| {
+            let events = Rc::clone(&events);
+            cx.subscribe(&view, move |_, event: &RemindersEvent, _| {
+                events.borrow_mut().push(event.clone());
+            })
+            .detach();
+        });
+        let key = |cx: &mut TestAppContext, key: &str| {
+            cx.update_window(handle, |_, window, cx| {
+                window.render_frame(cx);
+                window.key_down(key, false, cx);
+                window.key_up(key, cx);
+            })
+            .unwrap();
+            cx.run_until_parked();
+        };
+        key(cx, "secondary-d");
+        assert!(events.borrow().is_empty(), "nothing is selected yet");
+
+        key(cx, "down");
+        key(cx, "secondary-f");
+        key(cx, "secondary-d");
+        assert_eq!(
+            *events.borrow(),
+            [RemindersEvent::SetDone {
+                task_id: 1,
+                done: true
+            }]
         );
     }
 
