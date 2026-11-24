@@ -11,7 +11,7 @@ use gpui_kit::{App, AppContext as _, Global, Task};
 use jiff::Timestamp;
 use jiff::tz::TimeZone;
 use preferences::{TrayPreferences, TraySource};
-use reminders::{Reminder, Source, Status};
+use reminders::{Reminder, Source, Status, StatusFilter};
 use tray::{Command, Entry, Tray};
 
 use crate::app_session;
@@ -213,18 +213,29 @@ enum Loaded {
     Failed,
 }
 
-/// The reminders the menu lists: those still to come or passed while their task isn't
-/// done, earliest first.
-fn listed(reminders: &[Reminder], now: Timestamp) -> impl Iterator<Item = &Reminder> {
-    reminders
+/// The reminders the menu lists, earliest first: those still to come or passed while
+/// their task isn't done, and overdue tasks (as the reminders window's Overdue filter has
+/// them) that have no reminder time, at their due date.
+fn listed(reminders: &[Reminder], now: Timestamp) -> Vec<&Reminder> {
+    let mut listed: Vec<&Reminder> = reminders
         .iter()
-        .filter(move |reminder| matches!(reminder.status(now), Status::Past | Status::Upcoming))
+        .filter(|reminder| {
+            matches!(reminder.status(now), Status::Past | Status::Upcoming)
+                || (reminder.at.is_none() && is_overdue(reminder, now))
+        })
+        .collect();
+    listed.sort_by_key(|reminder| (reminder.at.or(reminder.task_due), reminder.task_id));
+    listed
+}
+
+fn is_overdue(reminder: &Reminder, now: Timestamp) -> bool {
+    StatusFilter::Overdue.matches(reminder, now)
 }
 
 /// How many reminders the menu has, before its limit; `None` without a list.
 fn count(loaded: &Loaded, now: Timestamp) -> Option<usize> {
     match loaded {
-        Loaded::Reminders { reminders, .. } => Some(listed(reminders, now).count()),
+        Loaded::Reminders { reminders, .. } => Some(listed(reminders, now).len()),
         Loaded::NotPicked | Loaded::Gone | Loaded::Failed => None,
     }
 }
@@ -263,17 +274,21 @@ fn menu_at(
         Loaded::Failed => entries.push(Entry::Text("Couldn't load the reminders".into())),
         Loaded::Reminders { title, reminders } => {
             entries.push(Entry::Text(title.clone()));
-            let listed: Vec<&Reminder> = listed(reminders, now).collect();
+            let listed = listed(reminders, now);
             let limit = preferences
                 .limit
                 .and_then(|limit| usize::try_from(limit).ok())
                 .unwrap_or(usize::MAX);
             for reminder in listed.iter().take(limit) {
-                let when = reminder
-                    .at
-                    .map_or_default(|at| reminders::format_time(at, zone));
+                let when = match (reminder.at, reminder.task_due) {
+                    (Some(at), _) => reminders::format_time(at, zone),
+                    (None, Some(due)) => format!("Due {}", reminders::format_time(due, zone)),
+                    (None, None) => String::new(),
+                };
                 // Said in words, not only by the menu's look.
-                let passed = if reminder.is_past(now) {
+                let passed = if is_overdue(reminder, now) {
+                    " (overdue)"
+                } else if reminder.is_past(now) {
                     " (passed)"
                 } else {
                     ""
@@ -388,6 +403,51 @@ mod tests {
         let all = menu_at(&loaded, &preferences(None), now, &TimeZone::UTC);
         assert!(labels(&all).contains(&"Thu 3 Dec 2026, 09:00 – Dentist".to_owned()));
         assert!(!labels(&all).iter().any(|label| label.contains("more")));
+    }
+
+    #[test]
+    fn lists_overdue_tasks_without_a_reminder_time_at_their_due_date() {
+        let now: Timestamp = "2026-12-01T12:00:00Z".parse().unwrap();
+        let unscheduled = |task_id, title: &str, due: Option<&str>, is_set, done| Reminder {
+            at: None,
+            task_due: due.map(|due| due.parse().unwrap()),
+            is_set,
+            ..reminder(task_id, title, "2026-01-01T00:00:00Z", done)
+        };
+        let mut overdue_reminder = reminder(5, "Tax return", "2026-11-28T09:00:00Z", false);
+        overdue_reminder.task_due = Some("2026-11-30T09:00:00Z".parse().unwrap());
+        let loaded = Loaded::Reminders {
+            title: "Home".into(),
+            reminders: vec![
+                reminder(1, "Rent", "2026-12-02T09:00:00Z", false),
+                overdue_reminder,
+                // No reminder, due yesterday: overdue.
+                unscheduled(2, "Insurance", Some("2026-11-30T17:00:00Z"), false, false),
+                // A relative reminder without a time, due earlier: overdue too.
+                unscheduled(3, "Passport", Some("2026-11-20T09:00:00Z"), true, false),
+                // Not overdue: done, due later, or no due date.
+                unscheduled(4, "Paid", Some("2026-11-29T09:00:00Z"), false, true),
+                unscheduled(6, "Later", Some("2026-12-09T09:00:00Z"), false, false),
+                unscheduled(7, "Someday", None, false, false),
+            ],
+        };
+        assert_eq!(count(&loaded, now), Some(4));
+        let entries = menu_at(&loaded, &preferences(None), now, &TimeZone::UTC);
+        assert_eq!(
+            labels(&entries).get(1..5),
+            Some(
+                &[
+                    "Due Fri 20 Nov 2026, 09:00 (overdue) – Passport".to_owned(),
+                    "Sat 28 Nov 2026, 09:00 (overdue) – Tax return".to_owned(),
+                    "Due Mon 30 Nov 2026, 17:00 (overdue) – Insurance".to_owned(),
+                    "Wed 2 Dec 2026, 09:00 – Rent".to_owned(),
+                ][..]
+            )
+        );
+        assert!(entries.contains(&Entry::Item {
+            label: "Due Mon 30 Nov 2026, 17:00 (overdue) – Insurance".into(),
+            command: Command::OpenTask(2),
+        }));
     }
 
     #[test]

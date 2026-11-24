@@ -13,8 +13,8 @@ use gpui_kit::{AnyWindowHandle, App, AppContext as _, Entity, Global, WeakEntity
 use preferences::{Appearance, DoubleClickAction, TrayPreferences, TraySource};
 use reminders::Source;
 use settings_ui::{
-    About, SettingsEvent, SettingsTab, SettingsView, ThemeChoices, TraySettings, TraySourceChoice,
-    TraySourceId, UpdateStatus,
+    About, SettingsEvent, SettingsTab, SettingsView, StartAtLogin, StartupAction, ThemeChoices,
+    TraySettings, TraySourceChoice, TraySourceId, UpdateStatus,
 };
 use updater::{Release, Updater};
 
@@ -211,6 +211,95 @@ fn save_tray(settings: &TraySettings, cx: &mut App) {
     crate::app_tray::apply(cx);
 }
 
+/// Make the app do `change` at login, or just read what it does, then show that in
+/// `view`. The system keeps whether it starts and with which arguments; the preferences
+/// keep which of the two ways it starts. Reading and changing it block, so they run in
+/// the background.
+fn start_at_login(view: WeakEntity<SettingsView>, change: Option<StartupAction>, cx: &mut App) {
+    let work = cx.background_spawn(async move {
+        let args: &[&str] = match change {
+            Some(StartupAction::OpenTray) => &[crate::TRAY_ARG],
+            _ => &[],
+        };
+        let autostart = autostart::Autostart::new(crate::APP_ID, args)?;
+        let failed = change.and_then(|action| {
+            autostart
+                .set_enabled(action != StartupAction::DoNotOpen)
+                .err()
+        });
+        Ok::<_, autostart::Error>((autostart.is_enabled()?, failed))
+    });
+    cx.spawn(async move |cx| {
+        let result = work.await;
+        cx.update(|cx| {
+            if let (Some(action), Ok((_, None))) = (change, &result) {
+                changed_start_at_login(action, &view, cx);
+            }
+            let in_tray = crate::app_preferences::get(cx).login_opens_tray;
+            let action = |on: bool| match (on, in_tray) {
+                (false, _) => StartupAction::DoNotOpen,
+                (true, false) => StartupAction::OpenWindow,
+                (true, true) => StartupAction::OpenTray,
+            };
+            let state = match result {
+                Ok((on, None)) => StartAtLogin::Known(action(on)),
+                Ok((on, Some(err))) => {
+                    log::warn!("couldn't change what opens at login: {err}");
+                    StartAtLogin::Failed {
+                        action: action(on),
+                        message: format!("Couldn't change what opens at login: {err}").into(),
+                    }
+                }
+                Err(err) => {
+                    log::warn!("couldn't read whether the app starts at login: {err}");
+                    StartAtLogin::Failed {
+                        action: StartupAction::DoNotOpen,
+                        message: format!(
+                            "Couldn't read whether {} opens at login: {err}",
+                            crate::APP_NAME
+                        )
+                        .into(),
+                    }
+                }
+            };
+            if let Some(view) = view.upgrade() {
+                view.update(cx, |view, cx| view.set_start_at_login(state, cx));
+            }
+        });
+    })
+    .detach();
+}
+
+/// Remember how the app now starts at login. Opening only the tray icon turns the icon on
+/// (and shows that in `view`'s Tray tab), or there would be nothing to see.
+fn changed_start_at_login(action: StartupAction, view: &WeakEntity<SettingsView>, cx: &mut App) {
+    let in_tray = action == StartupAction::OpenTray;
+    let turn_on_tray = in_tray && !crate::app_preferences::get(cx).tray.enabled;
+    crate::app_preferences::update(cx, |preferences| {
+        if action != StartupAction::DoNotOpen {
+            preferences.login_opens_tray = in_tray;
+        }
+        if turn_on_tray {
+            preferences.tray.enabled = true;
+        }
+    });
+    if !turn_on_tray {
+        return;
+    }
+    crate::app_tray::apply(cx);
+    let (Some(opened), Some(view)) = (opened(cx), view.upgrade()) else {
+        return;
+    };
+    let settings = tray_settings(&crate::app_preferences::get(cx).tray);
+    let tray = view.read(cx).tray().clone();
+    opened
+        .handle
+        .update(cx, |_, window, cx| {
+            tray.update(cx, |tray, cx| tray.set_settings(settings, window, cx));
+        })
+        .ok();
+}
+
 /// Open the settings window on its Updates tab and check for updates.
 pub fn check_for_updates(cx: &mut App) {
     if let Some((opened, _)) = open_view(cx) {
@@ -292,6 +381,7 @@ fn open_view(cx: &mut App) -> Option<(Opened, bool)> {
         })
         .ok();
     crate::app_windows::track(crate::app_windows::WindowKind::Settings, handle, cx);
+    start_at_login(view.downgrade(), None, cx);
     let opened = Opened {
         handle,
         view: view.downgrade(),
@@ -358,6 +448,9 @@ impl Updates {
                 crate::reminders_window::set_double_click(action, cx);
             }
             SettingsEvent::SetTray(settings) => save_tray(settings, cx),
+            &SettingsEvent::SetStartAtLogin(action) => {
+                start_at_login(updates.view.clone(), Some(action), cx);
+            }
         })
         .detach();
         this

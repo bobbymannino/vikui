@@ -86,6 +86,13 @@ for Updates…** from the Vikui menu or the button there. Click **Update to <ver
 Restart**: Vikui downloads it, checks its SHA-256 checksum, replaces itself and
 relaunches. Prereleases are never offered.
 
+Pick what happens when you log in on the **General** tab of **Settings**: **Do not open
+at login**, **Open the main window**, or **Open only the tray icon** (macOS and Windows),
+which turns the tray icon on and starts Vikui with just the icon showing. Vikui is
+started by a launch agent in `~/Library/LaunchAgents` on macOS, a `Run` registry entry on
+Windows and an autostart entry in `~/.config/autostart` on Linux. If the tray icon can't
+show (you're signed out, say), the window opens instead.
+
 Pick an appearance on the **Appearance** tab of **Settings**: **Light**, **Dark** or
 **Auto**, which follows the system as it switches. Pick the theme shown while light and
 the one shown while dark from the themes GPUI Kit publishes (Solarized, Catppuccin,
@@ -99,8 +106,9 @@ open it in the browser.
 
 Keep an eye on a project or saved filter from the menu bar (macOS) or the notification
 area (Windows): turn it on in the **Tray** tab of **Settings** and pick the list. Its menu
-shows that list's reminders whose task isn't done, earliest first, up to the limit you
-set; pick one to edit its task. **Show the number of reminders** puts their count beside
+shows that list's reminders whose task isn't done, and its overdue tasks (marked
+"overdue", at their due date if they have no reminder), earliest first, up to the limit
+you set; pick one to edit its task. **Show the number of reminders** puts their count beside
 the icon on macOS, or in its tooltip on Windows. While the icon shows, Vikui keeps
 running with its windows closed; reopen them from the icon's menu. Linux has no tray icon
 yet.

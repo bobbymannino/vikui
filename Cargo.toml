@@ -12,6 +12,7 @@ repository = "https://github.com/bobbymannino/vikui"
 
 [workspace.dependencies]
 # Internal crates
+autostart = { path = "crates/autostart" }
 description = { path = "crates/description" }
 filter-editor-ui = { path = "crates/filter-editor-ui" }
 labels-ui = { path = "crates/labels-ui" }
