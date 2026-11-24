@@ -142,6 +142,7 @@ Vikui must be able to write to the folder it is installed in. On macOS, move
 
 ## Feedback
 
-Found a bug or have an idea? Choose **Report a Bug…** or **Request a Feature…** on the
-**About** tab of **Settings**, or open a [new issue](../../issues/new/choose). Reporting a
-bug from Settings fills in your OS and Vikui version.
+Found a bug or have an idea? Choose **Report a Bug…** or **Request a Feature…** from the
+**Help** menu or the **About** tab of **Settings**, or open a
+[new issue](../../issues/new/choose). Reporting a bug from the app fills in your OS and
+Vikui version.

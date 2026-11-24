@@ -8,7 +8,7 @@ use gpui_kit::{App, Menu, MenuItem, OsAction};
 
 use crate::app_actions::{
     CheckForUpdates, CloseWindow, Minimize, NewReminder, OpenProjects, OpenSettings, Quit, Refresh,
-    SearchAllTasks, Zoom,
+    ReportBug, RequestFeature, SearchAllTasks, Zoom,
 };
 #[cfg(target_os = "macos")]
 use crate::app_actions::{Hide, HideOthers, ShowAll};
@@ -51,6 +51,10 @@ fn menus(projects: Vec<MenuItem>) -> Vec<Menu> {
             MenuItem::action("Zoom", Zoom),
             MenuItem::separator(),
             MenuItem::action("Open Projects Window", OpenProjects),
+        ]),
+        Menu::new("Help").items([
+            MenuItem::action("Report a Bug…", ReportBug),
+            MenuItem::action("Request a Feature…", RequestFeature),
         ]),
     ]
 }
@@ -102,7 +106,9 @@ mod tests {
         let titles: Vec<&str> = menus.iter().map(|menu| menu.name.as_ref()).collect();
         assert_eq!(
             titles,
-            ["Vikui", "File", "Edit", "View", "Projects", "Window"]
+            [
+                "Vikui", "File", "Edit", "View", "Projects", "Window", "Help"
+            ]
         );
         assert!(menus.iter().any(|menu| names(menu).contains(&"Refresh")));
         assert!(
@@ -111,10 +117,11 @@ mod tests {
                 .find(|menu| menu.name.as_ref() == "Edit")
                 .is_some_and(|menu| names(menu).contains(&"Search All Tasks…"))
         );
+        let menu = |title: &str| menus.iter().find(|menu| menu.name.as_ref() == title);
+        assert!(menu("Window").is_some_and(|menu| names(menu).contains(&"Open Projects Window")));
         assert!(
-            menus
-                .last()
-                .is_some_and(|menu| names(menu).contains(&"Open Projects Window"))
+            menu("Help")
+                .is_some_and(|menu| { names(menu) == ["Report a Bug…", "Request a Feature…"] })
         );
         assert!(
             menus
