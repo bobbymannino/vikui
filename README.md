@@ -97,6 +97,10 @@ Pick what double-clicking a reminder does on the **Reminders** tab of **Settings
 its details in a new window (the default), edit the task, mark it done or not done, or
 open it in the browser.
 
+Create labels and change their name or colour in the labels window: choose **Open
+Labels Window** from the **Window** menu. Vikunja lets only a label's creator change it,
+so a label shared with you through a task can't be saved.
+
 Search by label as well as text: `*label` (as in Vikunja's quick add) finds tasks with a
 label starting with that name, and `*"two words"` one with a space in it. `rent *bills`
 finds tasks matching "rent" labelled Bills; several labels must all be on the task. This
@@ -134,7 +138,7 @@ Vikui must be able to write to the folder it is installed in. On macOS, move
 | `Mod+O`           | Open the selected task in the browser    |
 | `Mod+E`           | Edit the selected task                   |
 | `Escape`          | Close reminder details                   |
-| `T`               | Mark the selected task done or not done  |
+| `T` / `Mod+D`     | Mark the selected task done or not done  |
 | `Mod+,`           | Open settings                            |
 | `Mod+W`           | Close window                             |
 | `Mod+Q`           | Quit                                     |

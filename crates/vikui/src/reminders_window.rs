@@ -322,6 +322,20 @@ pub fn reload(cx: &mut App) {
     }
 }
 
+/// Show in every open reminders window whether `task_id` is being saved, with a spinner
+/// on its rows.
+pub fn set_task_pending(task_id: i64, pending: bool, cx: &mut App) {
+    let views: Vec<_> = cx
+        .try_global::<RemindersWindow>()
+        .into_iter()
+        .flat_map(|open| open.browse.iter().chain(&open.search))
+        .filter_map(|opened| opened.view.upgrade())
+        .collect();
+    for view in views {
+        view.update(cx, |view, cx| view.set_task_pending(task_id, pending, cx));
+    }
+}
+
 /// One finished load: the list's reminders, their tasks and project titles by id.
 struct Load {
     reminders: Vec<Reminder>,
@@ -549,23 +563,36 @@ fn save_done(
     done: bool,
     cx: &mut App,
 ) {
+    // The list ignores a second toggle while this runs; the panel and task windows
+    // could still ask, and one save at a time keeps the result predictable.
+    if targets
+        .view
+        .upgrade()
+        .is_some_and(|view| view.read(cx).is_task_pending(task_id))
+    {
+        return;
+    }
+    set_task_pending(task_id, true, cx);
     let save = cx.background_spawn(async move {
         session.call(|client, token| client.set_task_done(token, task_id, done))
     });
     cx.spawn(async move |cx| {
         let result = save.await;
-        cx.update(|cx| match result {
-            Ok(task) => targets.saved(task, cx),
-            Err(vikunja::Error::Unauthorized) => on_session_expired(cx),
-            Err(err) => {
-                log::warn!("failed to update task {task_id}: {err:#}");
-                task_window::failed(task_id, &err.to_string(), cx);
-                if let Some(details) = targets.details.upgrade() {
-                    details.update(cx, |details, cx| {
-                        if details.task_id() == Some(task_id) {
-                            details.set_error(err.to_string(), cx);
-                        }
-                    });
+        cx.update(|cx| {
+            set_task_pending(task_id, false, cx);
+            match result {
+                Ok(task) => targets.saved(task, cx),
+                Err(vikunja::Error::Unauthorized) => on_session_expired(cx),
+                Err(err) => {
+                    log::warn!("failed to update task {task_id}: {err:#}");
+                    task_window::failed(task_id, &err.to_string(), cx);
+                    if let Some(details) = targets.details.upgrade() {
+                        details.update(cx, |details, cx| {
+                            if details.task_id() == Some(task_id) {
+                                details.set_error(err.to_string(), cx);
+                            }
+                        });
+                    }
                 }
             }
         });

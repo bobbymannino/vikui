@@ -4283,6 +4283,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "labels-ui"
+version = "0.8.1"
+dependencies = [
+ "gpui-kit",
+ "log",
+ "vikunja",
+]
+
+[[package]]
 name = "lazy_static"
 version = "1.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8192,6 +8201,7 @@ dependencies = [
  "env_logger",
  "gpui-kit",
  "jiff 1.0.0",
+ "labels-ui",
  "log",
  "login",
  "login-ui",
