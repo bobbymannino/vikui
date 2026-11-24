@@ -39,6 +39,9 @@ const APP_NAME: &str = "Vikui";
 /// The app's reverse-DNS identifier, shared with the macOS bundle and Linux desktop entry.
 const APP_ID: &str = "dev.bobman.vikui";
 
+/// Started at login with this, the app shows only its tray icon, if it can.
+const TRAY_ARG: &str = "--tray";
+
 fn main() {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
@@ -70,7 +73,8 @@ fn main() {
             app_theme::apply(&preferences.theme, cx);
             // Check the saved theme in the menu bar.
             app_menu::refresh(cx);
-            open_initial_window(cx);
+            let in_tray = std::env::args().skip(1).any(|arg| arg == TRAY_ARG);
+            open_initial_window(in_tray, cx);
             if preferences.check_for_updates_on_open {
                 settings_window::check_on_launch(cx);
             }
@@ -78,10 +82,12 @@ fn main() {
     });
 }
 
-/// Show the main window if the user is signed in, otherwise the login window.
+/// Show the main window if the user is signed in, otherwise the login window. `in_tray`
+/// (started at login to show only the tray icon) shows just the icon if the user is
+/// signed in and it can show.
 ///
 /// The keychain read can block (or prompt), so it runs off the main thread.
-fn open_initial_window(cx: &mut App) {
+fn open_initial_window(in_tray: bool, cx: &mut App) {
     let load = cx.background_spawn(async { login::credentials::load() });
     cx.spawn(async move |cx| {
         let credentials = load.await.unwrap_or_else(|err| {
@@ -90,6 +96,14 @@ fn open_initial_window(cx: &mut App) {
         });
         cx.update(|cx| {
             match credentials {
+                Some(credentials) if in_tray => {
+                    let signed_in = sign_in(credentials, cx);
+                    app_tray::apply(cx);
+                    if app_tray::is_shown(cx) {
+                        return;
+                    }
+                    open_main_window(signed_in, cx);
+                }
                 Some(credentials) => open_overview(credentials, cx),
                 None => {
                     open_login(Prompt::default(), cx);
@@ -111,6 +125,13 @@ fn open_login(prompt: Prompt, cx: &mut App) -> Option<AnyWindowHandle> {
 }
 
 fn open_overview(credentials: Credentials, cx: &mut App) {
+    let signed_in = sign_in(credentials, cx);
+    open_main_window(signed_in, cx);
+    app_tray::apply(cx);
+}
+
+/// Start the session `credentials` sign in to, for every window to share.
+fn sign_in(credentials: Credentials, cx: &mut App) -> app_session::SignedIn {
     let session = Arc::new(Session::new(credentials));
     // Every window of this session reports expiry here; only the first one signs out.
     let signed_out = Rc::new(Cell::new(false));
@@ -123,14 +144,10 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
         }
     });
     app_session::set(Arc::clone(&session), Rc::clone(&on_session_expired), cx);
-    open_main_window(
-        app_session::SignedIn {
-            session,
-            on_session_expired,
-        },
-        cx,
-    );
-    app_tray::apply(cx);
+    app_session::SignedIn {
+        session,
+        on_session_expired,
+    }
 }
 
 /// The main window's projects list, to reload after a project or filter changes.
