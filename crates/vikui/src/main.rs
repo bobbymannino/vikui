@@ -7,6 +7,7 @@ mod app_menu;
 mod app_preferences;
 mod app_session;
 mod app_theme;
+mod app_tray;
 mod app_windows;
 mod edit_task_window;
 mod filter_editor_window;
@@ -129,6 +130,7 @@ fn open_overview(credentials: Credentials, cx: &mut App) {
         },
         cx,
     );
+    app_tray::apply(cx);
 }
 
 /// The main window's projects list, to reload after a project or filter changes.
@@ -268,6 +270,7 @@ fn open_main_window(signed_in: app_session::SignedIn, cx: &mut App) {
 fn sign_out(session: &Session, cx: &mut App) {
     app_session::clear(cx);
     projects_menu::clear(cx);
+    app_tray::apply(cx);
     cx.background_spawn(async {
         if let Err(err) = login::credentials::clear() {
             log::warn!("failed to clear expired credentials: {err:#}");
@@ -295,10 +298,11 @@ fn sign_out(session: &Session, cx: &mut App) {
     }
 }
 
-/// macOS keeps apps alive with no windows; Vikui has nothing to show without one.
+/// macOS keeps apps alive with no windows; Vikui has nothing to show without one, unless
+/// its tray icon shows.
 fn quit_when_last_window_closes(cx: &mut App) {
     cx.on_window_closed(|cx, _| {
-        if cx.windows().is_empty() {
+        if cx.windows().is_empty() && !app_tray::is_shown(cx) {
             cx.quit();
         }
     })

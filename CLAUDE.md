@@ -25,6 +25,7 @@ Vikui: a cross-platform GPUI desktop client for Vikunja (see `README.md`).
 - `crates/preferences`: loads and saves the user's preferences file, no UI.
 - `crates/updater`: checks GitHub releases and installs an update in place, no UI.
 - `crates/table-layout`: a table's column order, widths and sort, kept while shown and saved between runs, no UI.
+- `crates/tray`: the tray icon (menu bar on macOS, notification area on Windows, none on Linux) and its menu, built from entries the app gives; no GPUI.
 - UI crates must not depend on each other; wire them together in `crates/vikui`.
 - Shared `version`/`edition` live in root `Cargo.toml` `[workspace.package]`; new crates inherit them.
 - Put shared dependency versions in root `[workspace.dependencies]` once a second crate needs them.
@@ -74,3 +75,10 @@ Vikui: a cross-platform GPUI desktop client for Vikunja (see `README.md`).
 
 - Run `cargo fmt --all`, `cargo lint` (clippy, `-D warnings`) and `cargo test -p <crate>`.
 - Lints live in root `Cargo.toml` `[workspace.lints]`; every crate sets `[lints] workspace = true`. Fix lints rather than `#[allow]`-ing them; justify any `#[expect(...)]` with a reason.
+
+## Commit Style
+
+- Commit each change
+- Follow previous commit styles
+- Do not add descriptions
+- Do not push to remote

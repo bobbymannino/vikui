@@ -29,6 +29,7 @@ reminders = { path = "crates/reminders" }
 reminders-ui = { path = "crates/reminders-ui" }
 settings-ui = { path = "crates/settings-ui" }
 table-layout = { path = "crates/table-layout" }
+tray = { path = "crates/tray" }
 updater = { path = "crates/updater" }
 vikunja = { path = "crates/vikunja" }
 

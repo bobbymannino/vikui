@@ -5,9 +5,16 @@
 //! app, and About shows what the app is (its name, version and a link to its source) and
 //! links to report a bug or request a feature. The
 //! app supplies [`About`], the [`ThemeChoices`], the [`DoubleClickAction`] and the
-//! [`UpdateStatus`], and applies and saves changes, checks and installs when the view asks
+//! [`UpdateStatus`] (and, for the Tray tab, [`TraySettingsView`]'s choices), and applies
+//! and saves changes, checks and installs when the view asks
 //! through [`SettingsEvent`]; this crate never fetches or saves. The app can bring a tab
 //! forward with [`SettingsView::set_tab`], e.g. Updates when one is available.
+
+mod tray_settings;
+
+pub use tray_settings::{
+    TraySettings, TraySettingsEvent, TraySettingsView, TraySourceChoice, TraySourceId,
+};
 
 use gpui_kit::base::Selectable as _;
 use gpui_kit::base::TestSupportExt as _;
@@ -154,15 +161,17 @@ pub enum SettingsTab {
     #[default]
     Appearance,
     Reminders,
+    Tray,
     Updates,
     About,
 }
 
 impl SettingsTab {
     /// In the order the tab bar shows them.
-    pub const ALL: [Self; 4] = [
+    pub const ALL: [Self; 5] = [
         Self::Appearance,
         Self::Reminders,
+        Self::Tray,
         Self::Updates,
         Self::About,
     ];
@@ -171,6 +180,7 @@ impl SettingsTab {
         match self {
             Self::Appearance => "Appearance",
             Self::Reminders => "Reminders",
+            Self::Tray => "Tray",
             Self::Updates => "Updates",
             Self::About => "About",
         }
@@ -181,6 +191,7 @@ impl SettingsTab {
         match self {
             Self::Appearance => "Appearance settings",
             Self::Reminders => "Reminder settings",
+            Self::Tray => "Tray settings",
             Self::Updates => "Update settings",
             Self::About => "App information",
         }
@@ -208,6 +219,8 @@ pub enum SettingsEvent {
     SetCheckForUpdatesOnOpen(bool),
     /// The user picked what double-clicking a reminder does; apply and save it.
     SetReminderDoubleClick(DoubleClickAction),
+    /// The user changed the tray's settings; apply and save them.
+    SetTray(TraySettings),
 }
 
 /// The settings view.
@@ -222,7 +235,8 @@ pub struct SettingsView {
     appearance: Appearance,
     light_theme: Entity<ThemeSelect>,
     dark_theme: Entity<ThemeSelect>,
-    _theme_events: [Subscription; 2],
+    tray: Entity<TraySettingsView>,
+    _subscriptions: [Subscription; 3],
 }
 
 type ThemeSelect = SelectState<Vec<SharedString>>;
@@ -268,6 +282,11 @@ impl SettingsView {
                 },
             ),
         ];
+        let tray = cx.new(|cx| TraySettingsView::new(TraySettings::default(), window, cx));
+        let [light_events, dark_events] = theme_events;
+        let tray_events = cx.subscribe(&tray, |_, _, event: &TraySettingsEvent, cx| {
+            cx.emit(SettingsEvent::SetTray(event.0.clone()));
+        });
         Self {
             tab: SettingsTab::default(),
             double_click: DoubleClickAction::default(),
@@ -279,7 +298,8 @@ impl SettingsView {
             appearance: theme.appearance,
             light_theme,
             dark_theme,
-            _theme_events: theme_events,
+            tray,
+            _subscriptions: [light_events, dark_events, tray_events],
         }
     }
 
@@ -368,6 +388,12 @@ impl SettingsView {
                         ),
                     ),
             )
+    }
+
+    /// The Tray tab, to give it the saved settings and the projects and filters to pick.
+    #[must_use]
+    pub fn tray(&self) -> &Entity<TraySettingsView> {
+        &self.tray
     }
 
     #[must_use]
@@ -574,6 +600,7 @@ impl Render for SettingsView {
         let panel = match self.tab {
             SettingsTab::Appearance => self.render_appearance(cx).into_any_element(),
             SettingsTab::Reminders => self.render_reminders(cx).into_any_element(),
+            SettingsTab::Tray => self.tray.clone().into_any_element(),
             SettingsTab::Updates => self.render_updates(cx).into_any_element(),
             SettingsTab::About => self.render_about(cx).into_any_element(),
         };
@@ -977,13 +1004,14 @@ mod tests {
         cx.update_window(handle, |_, window, cx| {
             window.render_frame(cx);
             let tabs = window.find_all_by_role(Role::Tab);
-            assert_eq!(tabs.len(), 4);
+            assert_eq!(tabs.len(), 5);
             assert_eq!(
                 window.within("settings-tabs").find(0_usize).selected(),
                 Some(true)
             );
             window.find_by_label("Appearance");
             window.find_by_label("Reminders");
+            window.find_by_label("Tray");
             window.find_by_label("Updates");
             window.find_by_label("About");
             window.find_by_label("Appearance settings");

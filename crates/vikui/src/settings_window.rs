@@ -10,8 +10,12 @@ use std::rc::Rc;
 
 use gpui_kit::component::ThemeMode;
 use gpui_kit::{AnyWindowHandle, App, AppContext as _, Entity, Global, WeakEntity};
-use preferences::{Appearance, DoubleClickAction};
-use settings_ui::{About, SettingsEvent, SettingsTab, SettingsView, ThemeChoices, UpdateStatus};
+use preferences::{Appearance, DoubleClickAction, TrayPreferences, TraySource};
+use reminders::Source;
+use settings_ui::{
+    About, SettingsEvent, SettingsTab, SettingsView, ThemeChoices, TraySettings, TraySourceChoice,
+    TraySourceId, UpdateStatus,
+};
 use updater::{Release, Updater};
 
 /// The open settings window, so a second request focuses it instead of opening another.
@@ -104,6 +108,109 @@ pub fn open(cx: &mut App) {
     }
 }
 
+/// Open the settings window on its Tray tab.
+pub fn open_tray(cx: &mut App) {
+    open(cx);
+    if let Some(view) = opened(cx).and_then(|opened| opened.view.upgrade()) {
+        view.update(cx, |view, cx| view.set_tab(SettingsTab::Tray, cx));
+    }
+}
+
+/// Offer the projects and saved filters in the Tray tab, if the window is open, e.g.
+/// after they load.
+pub fn show_tray_sources(cx: &mut App) {
+    let Some(opened) = opened(cx) else {
+        return;
+    };
+    let Some(view) = opened.view.upgrade() else {
+        return;
+    };
+    let choices = tray_choices(&crate::app_preferences::get(cx).tray, cx);
+    let tray = view.read(cx).tray().clone();
+    opened
+        .handle
+        .update(cx, |_, window, cx| {
+            tray.update(cx, |tray, cx| tray.set_sources(choices, window, cx));
+        })
+        .ok();
+}
+
+fn opened(cx: &App) -> Option<Opened> {
+    cx.try_global::<SettingsWindow>()
+        .and_then(|open| open.0.clone())
+}
+
+/// The lists the tray can show: the Projects menu's, or only the saved one while they
+/// haven't loaded.
+fn tray_choices(saved: &TrayPreferences, cx: &App) -> Vec<TraySourceChoice> {
+    let mut choices: Vec<TraySourceChoice> = crate::projects_menu::destinations(cx)
+        .into_iter()
+        .filter_map(|destination| {
+            let id = match destination.source {
+                Source::Project { id, .. } => TraySourceId::Project(id),
+                Source::SavedFilter { filter_id, .. } => TraySourceId::SavedFilter(filter_id),
+                Source::Filter(_) | Source::Search(_) => return None,
+            };
+            Some(TraySourceChoice {
+                id,
+                name: destination.name.into(),
+            })
+        })
+        .collect();
+    if let Some(source) = &saved.source {
+        let id = tray_source_id(source);
+        if !choices.iter().any(|choice| choice.id == id) {
+            choices.push(TraySourceChoice {
+                id,
+                name: source.title().to_owned().into(),
+            });
+        }
+    }
+    choices
+}
+
+fn tray_source_id(source: &TraySource) -> TraySourceId {
+    match *source {
+        TraySource::Project { id, .. } => TraySourceId::Project(id),
+        TraySource::SavedFilter { filter_id, .. } => TraySourceId::SavedFilter(filter_id),
+    }
+}
+
+fn tray_settings(saved: &TrayPreferences) -> TraySettings {
+    TraySettings {
+        enabled: saved.enabled,
+        source: saved.source.as_ref().map(tray_source_id),
+        limit: saved.limit,
+        show_count: saved.show_count,
+    }
+}
+
+/// Save `settings` from the Tray tab, naming its list after the choice picked, and
+/// show the tray to match.
+fn save_tray(settings: &TraySettings, cx: &mut App) {
+    let saved = crate::app_preferences::get(cx).tray;
+    let choices = tray_choices(&saved, cx);
+    let source = settings.source.and_then(|id| {
+        let title = choices
+            .iter()
+            .find(|choice| choice.id == id)
+            .map(|choice| choice.name.to_string())?;
+        Some(match id {
+            TraySourceId::Project(id) => TraySource::Project { id, title },
+            TraySourceId::SavedFilter(filter_id) => TraySource::SavedFilter { filter_id, title },
+        })
+    });
+    crate::app_preferences::update(cx, |preferences| {
+        preferences.tray = TrayPreferences {
+            enabled: settings.enabled,
+            source,
+            limit: settings.limit,
+            show_count: settings.show_count,
+        };
+    });
+    crate::app_tray::apply(cx);
+}
+
 /// Open the settings window on its Updates tab and check for updates.
 pub fn check_for_updates(cx: &mut App) {
     if let Some((opened, _)) = open_view(cx) {
@@ -171,6 +278,19 @@ fn open_view(cx: &mut App) -> Option<(Opened, bool)> {
     view.update(cx, |view, cx| {
         view.set_reminder_double_click(double_click, cx);
     });
+    let tray = view.read(cx).tray().clone();
+    let (settings, choices) = (
+        tray_settings(&preferences.tray),
+        tray_choices(&preferences.tray, cx),
+    );
+    handle
+        .update(cx, |_, window, cx| {
+            tray.update(cx, |tray, cx| {
+                tray.set_settings(settings, window, cx);
+                tray.set_sources(choices, window, cx);
+            });
+        })
+        .ok();
     crate::app_windows::track(crate::app_windows::WindowKind::Settings, handle, cx);
     let opened = Opened {
         handle,
@@ -237,6 +357,7 @@ impl Updates {
                 });
                 crate::reminders_window::set_double_click(action, cx);
             }
+            SettingsEvent::SetTray(settings) => save_tray(settings, cx),
         })
         .detach();
         this

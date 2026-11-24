@@ -26,6 +26,7 @@ reminder-details-ui.workspace = true
 reminders.workspace = true
 reminders-ui.workspace = true
 settings-ui.workspace = true
+tray.workspace = true
 # Names the OS and its version in bug reports.
 sysinfo = { version = "0.31", default-features = false, features = ["system"] }
 url.workspace = true
