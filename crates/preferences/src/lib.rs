@@ -80,8 +80,8 @@ pub struct TrayPreferences {
     pub source: Option<TraySource>,
     /// List at most this many reminders; `None` for all of them.
     pub limit: Option<u32>,
-    /// Show how many upcoming reminders there are beside the icon (macOS) or in its
-    /// tooltip (Windows).
+    /// Show how many reminders the menu has (before the limit) beside the icon (macOS)
+    /// or in its tooltip (Windows).
     pub show_count: bool,
 }
 

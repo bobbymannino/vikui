@@ -97,6 +97,14 @@ Pick what double-clicking a reminder does on the **Reminders** tab of **Settings
 its details in a new window (the default), edit the task, mark it done or not done, or
 open it in the browser.
 
+Keep an eye on a project or saved filter from the menu bar (macOS) or the notification
+area (Windows): turn it on in the **Tray** tab of **Settings** and pick the list. Its menu
+shows that list's reminders whose task isn't done, earliest first, up to the limit you
+set; pick one to edit its task. **Show the number of reminders** puts their count beside
+the icon on macOS, or in its tooltip on Windows. While the icon shows, Vikui keeps
+running with its windows closed; reopen them from the icon's menu. Linux has no tray icon
+yet.
+
 Create projects and change their name, identifier, colour, description or parent: choose
 **Edit Projects…** from the **Projects** menu, or right-click a project in the main
 window and choose **Edit project…**. **Edit Saved Filters…**, beside it, creates
