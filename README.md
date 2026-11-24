@@ -106,8 +106,9 @@ open it in the browser.
 
 Keep an eye on a project or saved filter from the menu bar (macOS) or the notification
 area (Windows): turn it on in the **Tray** tab of **Settings** and pick the list. Its menu
-shows that list's reminders whose task isn't done, earliest first, up to the limit you
-set; pick one to edit its task. **Show the number of reminders** puts their count beside
+shows that list's reminders whose task isn't done, and its overdue tasks (marked
+"overdue", at their due date if they have no reminder), earliest first, up to the limit
+you set; pick one to edit its task. **Show the number of reminders** puts their count beside
 the icon on macOS, or in its tooltip on Windows. While the icon shows, Vikui keeps
 running with its windows closed; reopen them from the icon's menu. Linux has no tray icon
 yet.
