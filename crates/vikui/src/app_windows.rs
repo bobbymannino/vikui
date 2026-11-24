@@ -29,6 +29,7 @@ pub enum WindowKind {
     Task,
     Labels,
     ProjectEditor,
+    FilterEditor,
 }
 
 impl WindowKind {
@@ -45,6 +46,7 @@ impl WindowKind {
             Self::Task => "task",
             Self::Labels => "labels",
             Self::ProjectEditor => "project-editor",
+            Self::FilterEditor => "filter-editor",
         }
     }
 }

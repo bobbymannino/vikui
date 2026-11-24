@@ -9,6 +9,7 @@ mod app_session;
 mod app_theme;
 mod app_windows;
 mod edit_task_window;
+mod filter_editor_window;
 mod labels_window;
 mod new_reminder_window;
 mod project_editor_window;
@@ -54,6 +55,7 @@ fn main() {
         new_reminder_ui::init(cx);
         labels_ui::init(cx);
         project_editor_ui::init(cx);
+        filter_editor_ui::init(cx);
         // Last, so the menus show every key binding.
         app_menu::init(cx);
         Theme::sync_system_appearance(None, cx);

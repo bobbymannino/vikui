@@ -7,8 +7,9 @@ use gpui_kit::component::input::{Copy, Cut, Paste, Redo, SelectAll, Undo};
 use gpui_kit::{App, Menu, MenuItem, OsAction};
 
 use crate::app_actions::{
-    CheckForUpdates, CloseWindow, EditProjects, Minimize, NewReminder, OpenLabels, OpenProjects,
-    OpenSettings, Quit, Refresh, ReportBug, RequestFeature, SearchAllTasks, Zoom,
+    CheckForUpdates, CloseWindow, EditProjects, EditSavedFilters, Minimize, NewReminder,
+    OpenLabels, OpenProjects, OpenSettings, Quit, Refresh, ReportBug, RequestFeature,
+    SearchAllTasks, Zoom,
 };
 #[cfg(target_os = "macos")]
 use crate::app_actions::{Hide, HideOthers, ShowAll};
@@ -54,6 +55,7 @@ fn menus(projects: Vec<MenuItem>, theme: MenuItem) -> Vec<Menu> {
         Menu::new("Projects").items(
             [
                 MenuItem::action("Edit Projects…", EditProjects),
+                MenuItem::action("Edit Saved Filters…", EditSavedFilters),
                 MenuItem::separator(),
             ]
             .into_iter()
@@ -134,9 +136,9 @@ mod tests {
         let menu = |title: &str| menus.iter().find(|menu| menu.name.as_ref() == title);
         assert!(menu("Window").is_some_and(|menu| names(menu).contains(&"Open Projects Window")));
         assert!(menu("Window").is_some_and(|menu| names(menu).contains(&"Open Labels Window")));
-        assert!(
-            menu("Projects").is_some_and(|menu| names(menu).first() == Some(&"Edit Projects…"))
-        );
+        assert!(menu("Projects").is_some_and(|menu| {
+            names(menu).starts_with(&["Edit Projects…", "Edit Saved Filters…"])
+        }));
         assert!(
             menu("Help")
                 .is_some_and(|menu| { names(menu) == ["Report a Bug…", "Request a Feature…"] })

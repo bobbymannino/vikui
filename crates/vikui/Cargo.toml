@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 env_logger.workspace = true
+filter-editor-ui.workspace = true
 gpui-kit.workspace = true
 jiff.workspace = true
 labels-ui.workspace = true

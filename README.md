@@ -98,7 +98,9 @@ its details in a new window (the default), edit the task, mark it done or not do
 open it in the browser.
 
 Create projects and change their name, identifier, colour, description or parent: choose
-**Edit Projects…** from the **Projects** menu.
+**Edit Projects…** from the **Projects** menu. **Edit Saved Filters…**, beside it, creates
+saved filters and changes their name, description or query, written in Vikunja's filter
+syntax (`done = false && due_date < now/w+1w`, say).
 
 Create labels and change their name or colour in the labels window: choose **Open
 Labels Window** from the **Window** menu. Vikunja lets only a label's creator change it,

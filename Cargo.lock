@@ -8207,6 +8207,7 @@ name = "vikui"
 version = "0.9.0"
 dependencies = [
  "env_logger",
+ "filter-editor-ui",
  "gpui-kit",
  "jiff 1.0.0",
  "labels-ui",
