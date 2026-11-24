@@ -3,6 +3,7 @@
 //! Calls block the current thread; run them on a background executor.
 
 mod error;
+mod label_draft;
 mod new_task;
 mod project;
 mod server_url;
@@ -18,6 +19,7 @@ use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig};
 
 pub use error::Error;
+pub use label_draft::LabelDraft;
 pub use new_task::NewTask;
 pub use project::{Project, ProjectKind};
 pub use server_url::{ServerUrl, ServerUrlError};
@@ -204,6 +206,28 @@ impl Client {
     /// Every label the user can see: their own and those on tasks they can access.
     pub fn labels(&self, token: &Token) -> Result<Vec<Label>, Error> {
         self.get_all_pages(token, "labels", &[])
+    }
+
+    /// Create a label and return it as saved.
+    pub fn create_label(&self, token: &Token, label: &LabelDraft) -> Result<Label, Error> {
+        self.put_json(token, "labels", &label.to_json())
+    }
+
+    /// Set `label_id`'s title and colour and return it as saved. Only the label's
+    /// creator may change it; the server refuses anyone else.
+    ///
+    /// Vikunja's update replaces every field, so this reads the whole label, changes only
+    /// the title and colour, and sends the rest back unchanged.
+    pub fn update_label(
+        &self,
+        token: &Token,
+        label_id: i64,
+        label: &LabelDraft,
+    ) -> Result<Label, Error> {
+        let path = format!("labels/{label_id}");
+        let mut saved: serde_json::Value = self.get_json(token, &path)?;
+        label.apply(&mut saved);
+        self.post_json(token, &path, &saved)
     }
 
     /// The project new tasks go to by default, from the user's settings; `None` if the
