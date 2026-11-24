@@ -42,6 +42,9 @@ use label_chip::LabelChip;
 
 const CONTEXT: &str = "NewReminder";
 
+/// The notes box's least height; it grows past this to fill the window.
+const NOTES_MIN_HEIGHT: f32 = 160.;
+
 gpui_kit::actions!(new_reminder, [Create, Cancel]);
 
 /// Register the window's key bindings. Call once at startup.
@@ -388,6 +391,36 @@ impl NewReminderView {
     }
 }
 
+impl NewReminderView {
+    /// The notes field, laid out like a form field: its label, the box and a hint. The
+    /// box takes the room the other fields leave, down to [`NOTES_MIN_HEIGHT`]; below
+    /// that the fields scroll.
+    fn render_notes(&self, cx: &App) -> impl IntoElement {
+        v_flex()
+            .id("new-reminder-notes")
+            .flex_1()
+            .gap_0p5()
+            .child(
+                div()
+                    .text_sm()
+                    .font_weight(FontWeight::MEDIUM)
+                    .child("Notes"),
+            )
+            .child(
+                Textarea::new(&self.body)
+                    .flex_1()
+                    .min_h(px(NOTES_MIN_HEIGHT))
+                    .aria_label("Notes"),
+            )
+            .child(
+                div()
+                    .text_xs()
+                    .text_color(cx.theme().muted_foreground)
+                    .child("Supports Markdown."),
+            )
+    }
+}
+
 /// The repeat select's items; each one's id is its index in `choices`.
 fn repeat_items(choices: &[RepeatChoice]) -> Vec<Choice> {
     choices
@@ -480,65 +513,69 @@ impl Render for NewReminderView {
                     .p_1()
                     .overflow_y_scroll()
                     .child(
-                        v_form()
+                        // The notes sit between two forms rather than in one: a form lays
+                        // its fields out in a grid, which can't give one field more room.
+                        // At least as tall as the scroll area, so the notes can grow into
+                        // whatever room the other fields leave.
+                        v_flex()
+                            .min_h_full()
+                            .gap_2()
                             .child(
-                                field().label("Title").required(true).child(
-                                    Input::new(&self.title)
-                                        .id("new-reminder-title")
-                                        .aria_label("Title"),
-                                ),
-                            )
-                            .child(
-                                field()
-                                    .label("Notes")
-                                    .description("Supports Markdown.")
-                                    .child(
-                                        Textarea::new(&self.body).h(px(160.)).aria_label("Notes"),
+                                v_form().child(
+                                    field().label("Title").required(true).child(
+                                        Input::new(&self.title)
+                                            .id("new-reminder-title")
+                                            .aria_label("Title"),
                                     ),
-                            )
-                            .child(
-                                field().label("Due").child(
-                                    // The picker has no accessible name of its own.
-                                    div()
-                                        .id("new-reminder-due")
-                                        .role(Role::Group)
-                                        .aria_label("Due date")
-                                        .child(
-                                            DatePicker::new(&self.due)
-                                                .placeholder("No due date")
-                                                .cleanable(true),
-                                        )
-                                        .test_support(),
                                 ),
                             )
+                            .child(self.render_notes(cx))
                             .child(
-                                field().label("Priority").child(
-                                    Select::new(&self.priority)
-                                        .id("new-reminder-priority")
-                                        .accessibility_label("Priority"),
-                                ),
-                            )
-                            .child(
-                                field().label("Repeat").child(
-                                    Select::new(&self.repeat)
-                                        .id("new-reminder-repeat")
-                                        .accessibility_label("Repeat"),
-                                ),
-                            )
-                            .child(
-                                field().label("Project").required(true).child(
-                                    Select::new(&self.project)
-                                        .id("new-reminder-project")
-                                        .accessibility_label("Project")
-                                        .placeholder(if ready {
-                                            "Choose a project"
-                                        } else {
-                                            "Loading…"
-                                        })
-                                        .disabled(!ready),
-                                ),
-                            )
-                            .child(field().label("Labels").child(labels)),
+                                v_form()
+                                    .child(
+                                        field().label("Due").child(
+                                            // The picker has no accessible name of its own.
+                                            div()
+                                                .id("new-reminder-due")
+                                                .role(Role::Group)
+                                                .aria_label("Due date")
+                                                .child(
+                                                    DatePicker::new(&self.due)
+                                                        .placeholder("No due date")
+                                                        .cleanable(true),
+                                                )
+                                                .test_support(),
+                                        ),
+                                    )
+                                    .child(
+                                        field().label("Priority").child(
+                                            Select::new(&self.priority)
+                                                .id("new-reminder-priority")
+                                                .accessibility_label("Priority"),
+                                        ),
+                                    )
+                                    .child(
+                                        field().label("Repeat").child(
+                                            Select::new(&self.repeat)
+                                                .id("new-reminder-repeat")
+                                                .accessibility_label("Repeat"),
+                                        ),
+                                    )
+                                    .child(
+                                        field().label("Project").required(true).child(
+                                            Select::new(&self.project)
+                                                .id("new-reminder-project")
+                                                .accessibility_label("Project")
+                                                .placeholder(if ready {
+                                                    "Choose a project"
+                                                } else {
+                                                    "Loading…"
+                                                })
+                                                .disabled(!ready),
+                                        ),
+                                    )
+                                    .child(field().label("Labels").child(labels)),
+                            ),
                     ),
             )
             .child(
@@ -712,6 +749,59 @@ mod tests {
         cx.update(|cx| view.update(cx, |view, cx| view.set_error("Server unavailable", cx)));
         assert!(has_label(cx, "Server unavailable"));
         assert!(!cx.update(|cx| view.read(cx).saving));
+    }
+
+    /// The notes box fills the room the other fields leave, never shrinking below its
+    /// least height or pushing the fields and buttons out of the window.
+    #[gpui_kit::test]
+    fn notes_grow_to_fill_the_window(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+        });
+        // The notes, labels and create button's bounds, and the window's height.
+        let layout = |cx: &mut TestAppContext, height: f32| {
+            let (handle, view) = cx.update(|cx| {
+                let bounds =
+                    gpui_kit::Bounds::centered(None, gpui_kit::size(px(520.), px(height)), cx);
+                let options = WindowOptions {
+                    window_bounds: Some(gpui_kit::WindowBounds::Windowed(bounds)),
+                    ..WindowOptions::default()
+                };
+                open(options, now(), cx).unwrap()
+            });
+            cx.update_window(handle, |_, window, cx| {
+                view.update(cx, |view, cx| view.set_options(&options(), window, cx));
+                window.render_frame(cx);
+                (
+                    window.find_by_label("Notes").bounds(),
+                    window.find_by_label("Label Errands").bounds(),
+                    window.find_by_label("Create reminder").bounds(),
+                    window.viewport_size().height,
+                )
+            })
+            .unwrap()
+        };
+
+        let (short, _, create, viewport) = layout(cx, 400.);
+        // The labelled editor sits inside the box's 1px border.
+        assert!(short.size.height >= px(NOTES_MIN_HEIGHT - 2.), "{short:?}");
+        assert!(create.bottom() <= viewport, "{create:?} in {viewport:?}");
+
+        let (tall, labels, create, viewport) = layout(cx, 1000.);
+        assert!(tall.size.height > short.size.height + px(100.), "{tall:?}");
+        // The fields after the notes stay below them, just above the buttons: the notes
+        // took the spare room.
+        assert!(labels.top() >= tall.bottom(), "{labels:?} after {tall:?}");
+        assert!(
+            labels.bottom() <= create.top(),
+            "{labels:?} before {create:?}"
+        );
+        assert!(
+            create.top() - labels.bottom() < px(40.),
+            "{labels:?} far above {create:?}"
+        );
+        assert!(create.bottom() <= viewport, "{create:?} in {viewport:?}");
     }
 
     #[gpui_kit::test]
