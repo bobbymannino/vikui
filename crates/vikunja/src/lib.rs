@@ -6,6 +6,7 @@ mod error;
 mod label_draft;
 mod new_task;
 mod project;
+mod project_draft;
 mod server_url;
 mod task;
 mod task_update;
@@ -22,6 +23,7 @@ pub use error::Error;
 pub use label_draft::LabelDraft;
 pub use new_task::NewTask;
 pub use project::{Project, ProjectKind};
+pub use project_draft::ProjectDraft;
 pub use server_url::{ServerUrl, ServerUrlError};
 pub use task::{
     Label, RelativeReminder, RelativeTo, Repeat, SavedFilter, SavedQuery, Task, TaskQuery,
@@ -182,6 +184,27 @@ impl Client {
     /// Every non-archived project the user can access, in the server's order.
     pub fn projects(&self, token: &Token) -> Result<Vec<Project>, Error> {
         self.get_all_pages(token, "projects", &[])
+    }
+
+    /// Create a project and return it as saved.
+    pub fn create_project(&self, token: &Token, project: &ProjectDraft) -> Result<Project, Error> {
+        self.put_json(token, "projects", &project.to_json())
+    }
+
+    /// Save `project` over `project_id` and return it as saved.
+    ///
+    /// Vikunja's update replaces every field, so this reads the whole project, changes
+    /// only what the draft holds, and sends the rest back unchanged.
+    pub fn update_project(
+        &self,
+        token: &Token,
+        project_id: i64,
+        project: &ProjectDraft,
+    ) -> Result<Project, Error> {
+        let path = format!("projects/{project_id}");
+        let mut saved: serde_json::Value = self.get_json(token, &path)?;
+        project.apply(&mut saved);
+        self.post_json(token, &path, &saved)
     }
 
     /// Every task matching `query`, across all projects the user can access.

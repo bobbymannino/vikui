@@ -12,15 +12,9 @@ pub struct LabelDraft {
 }
 
 impl LabelDraft {
-    /// The colour as Vikunja stores it: `rrggbb`, or empty for none.
-    fn hex_color(&self) -> String {
-        self.rgb
-            .map_or_else(String::new, |rgb| format!("{:06x}", rgb & 0x00ff_ffff))
-    }
-
     /// The body that creates the label.
     pub(crate) fn to_json(&self) -> Value {
-        serde_json::json!({ "title": self.title, "hex_color": self.hex_color() })
+        serde_json::json!({ "title": self.title, "hex_color": hex_color(self.rgb) })
     }
 
     /// Set the title and colour on `label`'s JSON, leaving every other field as it is.
@@ -28,9 +22,14 @@ impl LabelDraft {
     pub(crate) fn apply(&self, label: &mut Value) {
         if let Some(fields) = label.as_object_mut() {
             fields.insert("title".to_owned(), Value::String(self.title.clone()));
-            fields.insert("hex_color".to_owned(), Value::String(self.hex_color()));
+            fields.insert("hex_color".to_owned(), Value::String(hex_color(self.rgb)));
         }
     }
+}
+
+/// A colour as Vikunja stores it: `rrggbb`, or empty for none.
+pub(crate) fn hex_color(rgb: Option<u32>) -> String {
+    rgb.map_or_else(String::new, |rgb| format!("{:06x}", rgb & 0x00ff_ffff))
 }
 
 #[cfg(test)]
