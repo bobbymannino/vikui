@@ -74,3 +74,10 @@ Vikui: a cross-platform GPUI desktop client for Vikunja (see `README.md`).
 
 - Run `cargo fmt --all`, `cargo lint` (clippy, `-D warnings`) and `cargo test -p <crate>`.
 - Lints live in root `Cargo.toml` `[workspace.lints]`; every crate sets `[lints] workspace = true`. Fix lints rather than `#[allow]`-ing them; justify any `#[expect(...)]` with a reason.
+
+## Commit Style
+
+- Commit each change
+- Follow previous commit styles
+- Do not add descriptions
+- Do not push to remote
