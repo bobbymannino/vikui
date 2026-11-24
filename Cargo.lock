@@ -8297,6 +8297,7 @@ dependencies = [
  "reminders-ui",
  "settings-ui",
  "sysinfo",
+ "tray",
  "updater",
  "url",
  "vikunja",

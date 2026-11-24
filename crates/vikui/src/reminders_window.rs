@@ -307,9 +307,10 @@ pub fn shown_sources(cx: &App) -> Vec<Source> {
         .collect()
 }
 
-/// Reload the open reminders and search windows, e.g. after adding a reminder they may
-/// list.
+/// Reload the open reminders and search windows, and the tray's reminders, e.g. after
+/// adding a reminder they may list.
 pub fn reload(cx: &mut App) {
+    crate::app_tray::reload(cx);
     let loads: Vec<Rc<Loader>> = cx
         .try_global::<RemindersWindow>()
         .into_iter()

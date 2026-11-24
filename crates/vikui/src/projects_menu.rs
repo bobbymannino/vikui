@@ -54,6 +54,13 @@ pub fn set(projects: &[Project], cx: &mut App) {
     }
     cx.set_global(ProjectsMenu(destinations));
     crate::app_menu::refresh(cx);
+    crate::settings_window::show_tray_sources(cx);
+}
+
+/// The projects and saved filters listed, e.g. to pick from in Settings.
+pub fn destinations(cx: &App) -> Vec<Destination> {
+    cx.try_global::<ProjectsMenu>()
+        .map_or_default(|menu| menu.0.clone())
 }
 
 /// Empty the menu, e.g. on sign-out.
