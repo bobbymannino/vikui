@@ -8201,6 +8201,7 @@ dependencies = [
  "env_logger",
  "gpui-kit",
  "jiff 1.0.0",
+ "labels-ui",
  "log",
  "login",
  "login-ui",

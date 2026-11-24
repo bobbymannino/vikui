@@ -1,7 +1,7 @@
 //! App-wide actions and their key bindings: quitting, closing and arranging windows,
 //! refreshing whatever the focused window shows, adding a reminder, searching every
-//! project, opening the projects window or settings, and filing a bug report or feature
-//! request.
+//! project, opening the projects, labels or settings window, and filing a bug report or
+//! feature request.
 //!
 //! These bindings have no context, so a view's own binding for the same keys wins.
 
@@ -22,6 +22,7 @@ gpui_kit::actions!(
         CheckForUpdates,
         NewReminder,
         OpenProjects,
+        OpenLabels,
         SearchAllTasks,
         ReportBug,
         RequestFeature,
@@ -75,6 +76,7 @@ pub fn init(cx: &mut App) {
     cx.on_action(|_: &CheckForUpdates, cx| crate::settings_window::check_for_updates(cx));
     cx.on_action(|_: &NewReminder, cx| crate::new_reminder_window::open(cx));
     cx.on_action(|_: &OpenProjects, cx| crate::open_projects(cx));
+    cx.on_action(|_: &OpenLabels, cx| crate::labels_window::open(cx));
     cx.on_action(|_: &SearchAllTasks, cx| crate::reminders_window::show_search(cx));
     cx.on_action(|_: &ReportBug, cx| cx.open_url(&crate::app_issues::bug_report()));
     cx.on_action(|_: &RequestFeature, cx| cx.open_url(&crate::app_issues::feature_request()));

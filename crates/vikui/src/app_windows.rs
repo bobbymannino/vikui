@@ -27,6 +27,7 @@ pub enum WindowKind {
     EditTask,
     /// A task's details in a window of its own.
     Task,
+    Labels,
 }
 
 impl WindowKind {
@@ -41,6 +42,7 @@ impl WindowKind {
             Self::NewReminder => "new-reminder",
             Self::EditTask => "edit-task",
             Self::Task => "task",
+            Self::Labels => "labels",
         }
     }
 }

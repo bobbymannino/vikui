@@ -97,6 +97,10 @@ Pick what double-clicking a reminder does on the **Reminders** tab of **Settings
 its details in a new window (the default), edit the task, mark it done or not done, or
 open it in the browser.
 
+Create labels and change their name or colour in the labels window: choose **Open
+Labels Window** from the **Window** menu. Vikunja lets only a label's creator change it,
+so a label shared with you through a task can't be saved.
+
 Search by label as well as text: `*label` (as in Vikunja's quick add) finds tasks with a
 label starting with that name, and `*"two words"` one with a space in it. `rent *bills`
 finds tasks matching "rent" labelled Bills; several labels must all be on the task. This
