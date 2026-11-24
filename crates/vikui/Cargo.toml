@@ -9,6 +9,7 @@ repository.workspace = true
 
 [dependencies]
 env_logger.workspace = true
+filter-editor-ui.workspace = true
 gpui-kit.workspace = true
 jiff.workspace = true
 labels-ui.workspace = true
@@ -18,6 +19,7 @@ login-ui.workspace = true
 new-reminder.workspace = true
 new-reminder-ui.workspace = true
 overview-ui.workspace = true
+project-editor-ui.workspace = true
 projects-ui.workspace = true
 reminder-details.workspace = true
 reminder-details-ui.workspace = true

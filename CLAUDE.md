@@ -19,6 +19,8 @@ Vikui: a cross-platform GPUI desktop client for Vikunja (see `README.md`).
 - `crates/reminder-details`: builds the details of one reminder and its task, no UI.
 - `crates/reminder-details-ui`: details side panel; shows the details it is given and reports close via an event.
 - `crates/labels-ui`: labels window; lists the labels it is given and reports creating or editing one (title and colour) via events, never saves.
+- `crates/project-editor-ui`: window to create and edit projects (name, identifier, parent, colour, description); reports saves via events, never saves.
+- `crates/filter-editor-ui`: window to create and edit saved filters (name, query, description); reports saves via events, never saves.
 - `crates/settings-ui`: settings window; shows the app info and update status it is given, reports update requests via events.
 - `crates/preferences`: loads and saves the user's preferences file, no UI.
 - `crates/updater`: checks GitHub releases and installs an update in place, no UI.

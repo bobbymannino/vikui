@@ -97,6 +97,12 @@ Pick what double-clicking a reminder does on the **Reminders** tab of **Settings
 its details in a new window (the default), edit the task, mark it done or not done, or
 open it in the browser.
 
+Create projects and change their name, identifier, colour, description or parent: choose
+**Edit Projects…** from the **Projects** menu, or right-click a project in the main
+window and choose **Edit project…**. **Edit Saved Filters…**, beside it, creates
+saved filters and changes their name, description or query, written in Vikunja's filter
+syntax (`done = false && due_date < now/w+1w`, say).
+
 Create labels and change their name or colour in the labels window: choose **Open
 Labels Window** from the **Window** menu. Vikunja lets only a label's creator change it,
 so a label shared with you through a task can't be saved.
@@ -136,7 +142,7 @@ Vikui must be able to write to the folder it is installed in. On macOS, move
 | `Enter`           | Open a project / toggle reminder details |
 | `Mod+Enter`       | Open the selected task in its own window |
 | `Mod+O`           | Open the selected task in the browser    |
-| `Mod+E`           | Edit the selected task                   |
+| `Mod+E`           | Edit the selected task or project        |
 | `Escape`          | Close reminder details                   |
 | `T` / `Mod+D`     | Mark the selected task done or not done  |
 | `Mod+,`           | Open settings                            |

@@ -28,6 +28,8 @@ pub enum WindowKind {
     /// A task's details in a window of its own.
     Task,
     Labels,
+    ProjectEditor,
+    FilterEditor,
 }
 
 impl WindowKind {
@@ -43,6 +45,8 @@ impl WindowKind {
             Self::EditTask => "edit-task",
             Self::Task => "task",
             Self::Labels => "labels",
+            Self::ProjectEditor => "project-editor",
+            Self::FilterEditor => "filter-editor",
         }
     }
 }

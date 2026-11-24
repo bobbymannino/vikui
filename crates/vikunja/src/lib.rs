@@ -3,9 +3,11 @@
 //! Calls block the current thread; run them on a background executor.
 
 mod error;
+mod filter_draft;
 mod label_draft;
 mod new_task;
 mod project;
+mod project_draft;
 mod server_url;
 mod task;
 mod task_update;
@@ -19,9 +21,11 @@ use ureq::Agent;
 use ureq::tls::{RootCerts, TlsConfig};
 
 pub use error::Error;
+pub use filter_draft::FilterDraft;
 pub use label_draft::LabelDraft;
 pub use new_task::NewTask;
 pub use project::{Project, ProjectKind};
+pub use project_draft::ProjectDraft;
 pub use server_url::{ServerUrl, ServerUrlError};
 pub use task::{
     Label, RelativeReminder, RelativeTo, Repeat, SavedFilter, SavedQuery, Task, TaskQuery,
@@ -184,6 +188,27 @@ impl Client {
         self.get_all_pages(token, "projects", &[])
     }
 
+    /// Create a project and return it as saved.
+    pub fn create_project(&self, token: &Token, project: &ProjectDraft) -> Result<Project, Error> {
+        self.put_json(token, "projects", &project.to_json())
+    }
+
+    /// Save `project` over `project_id` and return it as saved.
+    ///
+    /// Vikunja's update replaces every field, so this reads the whole project, changes
+    /// only what the draft holds, and sends the rest back unchanged.
+    pub fn update_project(
+        &self,
+        token: &Token,
+        project_id: i64,
+        project: &ProjectDraft,
+    ) -> Result<Project, Error> {
+        let path = format!("projects/{project_id}");
+        let mut saved: serde_json::Value = self.get_json(token, &path)?;
+        project.apply(&mut saved);
+        self.post_json(token, &path, &saved)
+    }
+
     /// Every task matching `query`, across all projects the user can access.
     pub fn tasks(&self, token: &Token, query: &TaskQuery) -> Result<Vec<Task>, Error> {
         let mut params = Vec::new();
@@ -316,6 +341,31 @@ impl Client {
     /// One saved filter, including the query it stores.
     pub fn saved_filter(&self, token: &Token, filter_id: i64) -> Result<SavedFilter, Error> {
         self.get_json(token, &format!("filters/{filter_id}"))
+    }
+
+    /// Create a saved filter and return it as saved.
+    pub fn create_saved_filter(
+        &self,
+        token: &Token,
+        filter: &FilterDraft,
+    ) -> Result<SavedFilter, Error> {
+        self.put_json(token, "filters", &filter.to_json())
+    }
+
+    /// Save `filter` over `filter_id` and return it as saved.
+    ///
+    /// Vikunja's update replaces every field, so this reads the whole filter, changes
+    /// only what the draft holds, and sends the rest back unchanged.
+    pub fn update_saved_filter(
+        &self,
+        token: &Token,
+        filter_id: i64,
+        filter: &FilterDraft,
+    ) -> Result<SavedFilter, Error> {
+        let path = format!("filters/{filter_id}");
+        let mut saved: serde_json::Value = self.get_json(token, &path)?;
+        filter.apply(&mut saved);
+        self.post_json(token, &path, &saved)
     }
 
     /// Mark a task done (or not done) and return it as the server saved it.
